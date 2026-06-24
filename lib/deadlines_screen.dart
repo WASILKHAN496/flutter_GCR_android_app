@@ -2,6 +2,7 @@ import 'package:best_flutter_ui_templates/app_theme.dart';
 import 'package:best_flutter_ui_templates/services/classroom_data_service.dart';
 import 'package:best_flutter_ui_templates/services/google_login_service.dart';
 import 'package:best_flutter_ui_templates/task_detail_screen.dart';
+import 'package:best_flutter_ui_templates/widgets/app_state_widgets.dart';
 import 'package:flutter/material.dart';
 
 class DeadlinesScreen extends StatefulWidget {
@@ -28,10 +29,12 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
 
   final List<String> filters = const <String>[
     'All',
+    'Submitted',
+    'Pending',
+    'Late Not Submitted',
     'Today',
     'This Week',
     'Upcoming',
-    'Late',
     'No Due Date',
   ];
 
@@ -61,7 +64,7 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
     }
   }
 
-  Future<void> loadDeadlines() async {
+  Future<void> loadDeadlines({bool forceRefresh = false}) async {
     setState(() {
       isLoading = true;
       errorText = '';
@@ -71,7 +74,9 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
       await GoogleLoginService.instance.signInSilently();
 
       final List<RealClassroomTask> fetchedTasks =
-      await ClassroomDataService.instance.getAllCourseWork();
+      await ClassroomDataService.instance.getAllCourseWork(
+        forceRefresh: forceRefresh,
+      );
 
       if (!mounted) {
         return;
@@ -80,6 +85,7 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
       setState(() {
         realTasks = fetchedTasks;
         isLoading = false;
+        errorText = '';
       });
     } catch (error) {
       if (!mounted) {
@@ -94,25 +100,32 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
   }
 
   List<DeadlineViewData> get deadlines {
-    return realTasks
-        .asMap()
-        .entries
-        .map((MapEntry<int, RealClassroomTask> item) {
-      return DeadlineViewData.fromRealTask(item.value, item.key);
-    }).toList();
+    return realTasks.asMap().entries.map(
+          (MapEntry<int, RealClassroomTask> item) {
+        return DeadlineViewData.fromRealTask(item.value, item.key);
+      },
+    ).toList();
   }
 
   List<DeadlineViewData> get visibleDeadlines {
     final String query = searchController.text.toLowerCase().trim();
 
     return deadlines.where((DeadlineViewData item) {
-      final bool filterOk =
-          selectedFilter == 'All' || item.category == selectedFilter;
+      bool filterOk = false;
+
+      if (selectedFilter == 'All') {
+        filterOk = true;
+      } else {
+        filterOk = item.status == selectedFilter ||
+            item.category == selectedFilter;
+      }
 
       final bool searchOk = query.isEmpty ||
           item.title.toLowerCase().contains(query) ||
           item.course.toLowerCase().contains(query) ||
-          item.priority.toLowerCase().contains(query);
+          item.priority.toLowerCase().contains(query) ||
+          item.status.toLowerCase().contains(query) ||
+          item.category.toLowerCase().contains(query);
 
       return filterOk && searchOk;
     }).toList();
@@ -120,19 +133,31 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
 
   int get todayCount {
     return deadlines.where((DeadlineViewData item) {
-      return item.category == 'Today';
+      return item.category == 'Today' && item.status != 'Submitted';
     }).length;
   }
 
   int get weekCount {
     return deadlines.where((DeadlineViewData item) {
-      return item.category == 'This Week';
+      return item.category == 'This Week' && item.status != 'Submitted';
+    }).length;
+  }
+
+  int get submittedCount {
+    return deadlines.where((DeadlineViewData item) {
+      return item.status == 'Submitted';
+    }).length;
+  }
+
+  int get pendingCount {
+    return deadlines.where((DeadlineViewData item) {
+      return item.status == 'Pending';
     }).length;
   }
 
   int get lateCount {
     return deadlines.where((DeadlineViewData item) {
-      return item.category == 'Late';
+      return item.status == 'Late Not Submitted';
     }).length;
   }
 
@@ -164,36 +189,46 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
   }
 
   Widget buildBody(bool isLightMode) {
-    return ListView(
-      controller: scrollController,
-      physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.only(
-        top: AppBar().preferredSize.height +
-            MediaQuery.of(context).padding.top +
-            28,
-        bottom: 32 + MediaQuery.of(context).padding.bottom,
-      ),
-      children: <Widget>[
-        animatedWidget(0, buildHeaderCard(isLightMode)),
-        animatedWidget(1, buildSearchBox(isLightMode)),
-        animatedWidget(2, buildFilterSection(isLightMode)),
-        animatedWidget(3, buildSummaryRow(isLightMode)),
-        animatedWidget(
-          4,
-          buildSectionTitle(
-            title: 'Classroom Deadlines',
-            subtitle: isLoading ? 'Loading' : '${visibleDeadlines.length} found',
-            isLightMode: isLightMode,
-          ),
+    return RefreshIndicator(
+      color: const Color(0xFF2633C5),
+      backgroundColor: isLightMode ? Colors.white : AppTheme.nearlyBlack,
+      onRefresh: () async {
+        await loadDeadlines(forceRefresh: true);
+      },
+      child: ListView(
+        controller: scrollController,
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
         ),
-        if (isLoading) animatedWidget(5, loadingCard(isLightMode)),
-        if (!isLoading && errorText.isNotEmpty)
-          animatedWidget(5, errorCard(isLightMode)),
-        if (!isLoading && errorText.isEmpty && visibleDeadlines.isEmpty)
-          animatedWidget(5, emptyCard(isLightMode)),
-        if (!isLoading && errorText.isEmpty && visibleDeadlines.isNotEmpty)
-          animatedWidget(5, buildDeadlineList(isLightMode)),
-      ],
+        padding: EdgeInsets.only(
+          top: AppBar().preferredSize.height +
+              MediaQuery.of(context).padding.top +
+              28,
+          bottom: 32 + MediaQuery.of(context).padding.bottom,
+        ),
+        children: <Widget>[
+          animatedWidget(0, buildHeaderCard(isLightMode)),
+          animatedWidget(1, buildSearchBox(isLightMode)),
+          animatedWidget(2, buildFilterSection(isLightMode)),
+          animatedWidget(3, buildSummaryRow(isLightMode)),
+          animatedWidget(
+            4,
+            buildSectionTitle(
+              title: 'Classroom Deadlines',
+              subtitle:
+              isLoading ? 'Loading' : '${visibleDeadlines.length} found',
+              isLightMode: isLightMode,
+            ),
+          ),
+          if (isLoading) animatedWidget(5, loadingCard(isLightMode)),
+          if (!isLoading && errorText.isNotEmpty)
+            animatedWidget(5, errorCard(isLightMode)),
+          if (!isLoading && errorText.isEmpty && visibleDeadlines.isEmpty)
+            animatedWidget(5, emptyCard(isLightMode)),
+          if (!isLoading && errorText.isEmpty && visibleDeadlines.isNotEmpty)
+            animatedWidget(5, buildDeadlineList(isLightMode)),
+        ],
+      ),
     );
   }
 
@@ -288,7 +323,7 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
                     circleButton(
                       icon: Icons.refresh_rounded,
                       isLightMode: isLightMode,
-                      onTap: loadDeadlines,
+                      onTap: () => loadDeadlines(forceRefresh: true),
                     ),
                   ],
                 ),
@@ -368,7 +403,7 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Upcoming dates are loaded from your real Google Classroom assignments.',
+                    'Real due dates with submitted, pending and late status from Google Classroom.',
                     style: TextStyle(
                       fontFamily: AppTheme.fontName,
                       fontSize: 12.5,
@@ -445,7 +480,7 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
             fontSize: 13,
           ),
           decoration: InputDecoration(
-            hintText: 'Search deadline or course',
+            hintText: 'Search deadline, course or status',
             hintStyle: TextStyle(
               color: isLightMode
                   ? AppTheme.grey.withOpacity(0.75)
@@ -544,23 +579,31 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
             title: 'Today',
             value: todayCount.toString(),
             icon: Icons.today_rounded,
-            color: const Color(0xFFEF5350),
-            isLightMode: isLightMode,
-          ),
-          const SizedBox(width: 10),
-          summaryBox(
-            title: 'Week',
-            value: weekCount.toString(),
-            icon: Icons.date_range_rounded,
             color: const Color(0xFFFFA726),
             isLightMode: isLightMode,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
+          summaryBox(
+            title: 'Pending',
+            value: pendingCount.toString(),
+            icon: Icons.pending_actions_rounded,
+            color: const Color(0xFFFFA726),
+            isLightMode: isLightMode,
+          ),
+          const SizedBox(width: 8),
+          summaryBox(
+            title: 'Done',
+            value: submittedCount.toString(),
+            icon: Icons.task_alt_rounded,
+            color: const Color(0xFF66BB6A),
+            isLightMode: isLightMode,
+          ),
+          const SizedBox(width: 8),
           summaryBox(
             title: 'Late',
             value: lateCount.toString(),
             icon: Icons.warning_rounded,
-            color: const Color(0xFF42A5F5),
+            color: const Color(0xFFEF5350),
             isLightMode: isLightMode,
           ),
         ],
@@ -578,7 +621,7 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
     return Expanded(
       child: Container(
         height: 92,
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: isLightMode ? Colors.white : Colors.white.withOpacity(0.06),
           borderRadius: BorderRadius.circular(16),
@@ -587,22 +630,24 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Icon(icon, color: color, size: 23),
+            Icon(icon, color: color, size: 22),
             const Spacer(),
             Text(
               value,
               style: TextStyle(
                 fontFamily: AppTheme.fontName,
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: FontWeight.w800,
                 color: color,
               ),
             ),
             Text(
               title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: AppTheme.fontName,
-                fontSize: 11,
+                fontSize: 10,
                 color: isLightMode
                     ? AppTheme.grey
                     : AppTheme.white.withOpacity(0.65),
@@ -651,96 +696,38 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
   }
 
   Widget loadingCard(bool isLightMode) {
-    return messageCard(
-      isLightMode: isLightMode,
+    return const AppLoadingCard(
+      title: 'Loading deadlines...',
+      subtitle: 'Fetching due dates and submission status from Google Classroom.',
       icon: Icons.cloud_sync_rounded,
-      color: const Color(0xFF42A5F5),
-      title: 'Loading real deadlines...',
-      subtitle: 'Fetching due dates from Google Classroom API.',
-      isLoading: true,
+      color: Color(0xFF42A5F5),
     );
   }
 
   Widget errorCard(bool isLightMode) {
-    return messageCard(
-      isLightMode: isLightMode,
-      icon: Icons.error_outline_rounded,
-      color: const Color(0xFFEF5350),
+    return AppErrorCard(
       title: 'Unable to load deadlines',
       subtitle: errorText,
-      isLoading: false,
+      icon: Icons.error_outline_rounded,
+      color: const Color(0xFFEF5350),
+      onRetry: () {
+        loadDeadlines(forceRefresh: true);
+      },
     );
   }
 
   Widget emptyCard(bool isLightMode) {
-    return messageCard(
-      isLightMode: isLightMode,
+    return AppEmptyCard(
+      title: 'No deadlines found',
+      subtitle: selectedFilter == 'All'
+          ? 'No relevant Google Classroom deadlines were found.'
+          : 'No deadline matched the "$selectedFilter" filter.',
       icon: Icons.inbox_rounded,
       color: const Color(0xFFFFA726),
-      title: 'No deadlines found',
-      subtitle: 'No relevant Google Classroom deadlines were found.',
-      isLoading: false,
-    );
-  }
-
-  Widget messageCard({
-    required bool isLightMode,
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    required bool isLoading,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isLightMode ? Colors.white : Colors.white.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: cardShadow(isLightMode),
-        ),
-        child: Row(
-          children: <Widget>[
-            isLoading
-                ? const SizedBox(
-              height: 34,
-              width: 34,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            )
-                : Icon(icon, color: color, size: 34),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontName,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: isLightMode ? AppTheme.darkText : AppTheme.white,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontName,
-                      fontSize: 12,
-                      height: 1.35,
-                      color: isLightMode
-                          ? AppTheme.grey
-                          : AppTheme.white.withOpacity(0.65),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+      buttonText: 'Refresh',
+      onButtonTap: () {
+        loadDeadlines(forceRefresh: true);
+      },
     );
   }
 
@@ -765,6 +752,11 @@ class _DeadlinesScreenState extends State<DeadlinesScreen>
                     description: deadline.description,
                     color: deadline.color,
                     icon: deadline.icon,
+                    workType: deadline.workType,
+                    maxPointsText: deadline.maxPointsText,
+                    gradeText: deadline.gradeText,
+                    submissionState: deadline.submissionState,
+                    alternateLink: deadline.alternateLink,
                   ),
                 ),
               );
@@ -870,9 +862,8 @@ class DeadlineCard extends StatelessWidget {
           style: TextStyle(
             fontFamily: AppTheme.fontName,
             fontSize: 12,
-            color: isLightMode
-                ? AppTheme.grey
-                : AppTheme.white.withOpacity(0.65),
+            color:
+            isLightMode ? AppTheme.grey : AppTheme.white.withOpacity(0.65),
           ),
         ),
         const SizedBox(height: 8),
@@ -880,8 +871,10 @@ class DeadlineCard extends StatelessWidget {
           spacing: 6,
           runSpacing: 5,
           children: <Widget>[
-            pill(deadline.category, deadline.color),
-            pill(deadline.priority, priorityColor),
+            pill(deadline.status, deadline.color),
+            if (deadline.category != deadline.status)
+              pill(deadline.category, deadline.categoryColor),
+            pill(deadline.priority, deadline.priorityColor),
           ],
         ),
       ],
@@ -929,18 +922,6 @@ class DeadlineCard extends StatelessWidget {
       ),
     );
   }
-
-  Color get priorityColor {
-    if (deadline.priority == 'High') {
-      return const Color(0xFFEF5350);
-    }
-
-    if (deadline.priority == 'Medium') {
-      return const Color(0xFFFFA726);
-    }
-
-    return const Color(0xFF66BB6A);
-  }
 }
 
 class DeadlineViewData {
@@ -952,27 +933,46 @@ class DeadlineViewData {
     required this.status,
     required this.priority,
     required this.description,
+    required this.workType,
+    required this.maxPointsText,
+    required this.gradeText,
+    required this.submissionState,
+    required this.alternateLink,
     required this.color,
+    required this.categoryColor,
+    required this.priorityColor,
     required this.icon,
   });
 
   factory DeadlineViewData.fromRealTask(RealClassroomTask task, int index) {
-    final String category = getCategory(task.dueDateTime);
-    final Color color = getColor(category, index);
-    final String priority = getPriority(task.dueDateTime);
+    final String status = task.submissionStatus;
+    final String category = getCategory(task);
+    final Color statusColor = getStatusColor(status);
+    final Color categoryColor = getCategoryColor(category, index);
+    final String priority = getPriority(task.dueDateTime, status);
 
     return DeadlineViewData(
       title: task.title,
       course: task.courseName,
       dateText: formatDate(task.dueDateTime),
       category: category,
-      status: 'Pending',
+      status: status,
       priority: priority,
       description: task.description.isEmpty
           ? 'This deadline was loaded from Google Classroom API.'
           : task.description,
-      color: color,
-      icon: getIcon(category),
+      workType: task.workType.isEmpty ? 'COURSE_WORK' : task.workType,
+      maxPointsText: task.maxPoints == null
+          ? 'No points'
+          : '${task.maxPoints!.toStringAsFixed(1)} points',
+      gradeText: task.gradeText,
+      submissionState:
+      task.submissionState.isEmpty ? 'Unknown' : task.submissionState,
+      alternateLink: task.alternateLink,
+      color: statusColor,
+      categoryColor: categoryColor,
+      priorityColor: getPriorityColor(priority),
+      icon: getIcon(status, category),
     );
   }
 
@@ -981,10 +981,25 @@ class DeadlineViewData {
       return 'No due date';
     }
 
-    return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    final String day = dateTime.day.toString().padLeft(2, '0');
+    final String month = dateTime.month.toString().padLeft(2, '0');
+    final String hour = dateTime.hour.toString().padLeft(2, '0');
+    final String minute = dateTime.minute.toString().padLeft(2, '0');
+
+    return '$day/$month/${dateTime.year}\n$hour:$minute';
   }
 
-  static String getCategory(DateTime? dateTime) {
+  static String getCategory(RealClassroomTask task) {
+    if (task.submissionStatus == 'Submitted') {
+      return 'Submitted';
+    }
+
+    if (task.submissionStatus == 'Late Not Submitted') {
+      return 'Late Not Submitted';
+    }
+
+    final DateTime? dateTime = task.dueDateTime;
+
     if (dateTime == null) {
       return 'No Due Date';
     }
@@ -999,28 +1014,35 @@ class DeadlineViewData {
 
     final int difference = dueDay.difference(today).inDays;
 
-    if (difference < 0) {
-      return 'Late';
-    }
-
     if (difference == 0) {
       return 'Today';
     }
 
-    if (difference <= 7) {
+    if (difference > 0 && difference <= 7) {
       return 'This Week';
     }
 
-    return 'Upcoming';
+    if (difference > 7) {
+      return 'Upcoming';
+    }
+
+    return 'Late Not Submitted';
   }
 
-  static String getPriority(DateTime? dateTime) {
+  static String getPriority(DateTime? dateTime, String status) {
+    if (status == 'Submitted') {
+      return 'Done';
+    }
+
+    if (status == 'Late Not Submitted') {
+      return 'High';
+    }
+
     if (dateTime == null) {
       return 'Low';
     }
 
-    final DateTime now = DateTime.now();
-    final int difference = dateTime.difference(now).inDays;
+    final int difference = dateTime.difference(DateTime.now()).inDays;
 
     if (difference <= 1) {
       return 'High';
@@ -1033,8 +1055,12 @@ class DeadlineViewData {
     return 'Low';
   }
 
-  static IconData getIcon(String category) {
-    if (category == 'Late') {
+  static IconData getIcon(String status, String category) {
+    if (status == 'Submitted') {
+      return Icons.task_alt_rounded;
+    }
+
+    if (status == 'Late Not Submitted') {
       return Icons.warning_rounded;
     }
 
@@ -1053,8 +1079,24 @@ class DeadlineViewData {
     return Icons.event_available_rounded;
   }
 
-  static Color getColor(String category, int index) {
-    if (category == 'Late') {
+  static Color getStatusColor(String status) {
+    if (status == 'Submitted') {
+      return const Color(0xFF66BB6A);
+    }
+
+    if (status == 'Late Not Submitted') {
+      return const Color(0xFFEF5350);
+    }
+
+    return const Color(0xFFFFA726);
+  }
+
+  static Color getCategoryColor(String category, int index) {
+    if (category == 'Submitted') {
+      return const Color(0xFF66BB6A);
+    }
+
+    if (category == 'Late Not Submitted') {
       return const Color(0xFFEF5350);
     }
 
@@ -1080,6 +1122,22 @@ class DeadlineViewData {
     return colors[index % colors.length];
   }
 
+  static Color getPriorityColor(String priority) {
+    if (priority == 'High') {
+      return const Color(0xFFEF5350);
+    }
+
+    if (priority == 'Medium') {
+      return const Color(0xFFFFA726);
+    }
+
+    if (priority == 'Done') {
+      return const Color(0xFF66BB6A);
+    }
+
+    return const Color(0xFF42A5F5);
+  }
+
   final String title;
   final String course;
   final String dateText;
@@ -1087,6 +1145,13 @@ class DeadlineViewData {
   final String status;
   final String priority;
   final String description;
+  final String workType;
+  final String maxPointsText;
+  final String gradeText;
+  final String submissionState;
+  final String alternateLink;
   final Color color;
+  final Color categoryColor;
+  final Color priorityColor;
   final IconData icon;
 }

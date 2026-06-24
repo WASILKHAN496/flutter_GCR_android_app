@@ -21,11 +21,12 @@ class ClassroomDataService {
   List<RealClassroomTask>? _cachedTasks;
   DateTime? _lastSyncTime;
   bool _isUsingOfflineData = false;
-
+  Future<void>? _runningBackgroundSync;
+  bool _isBackgroundSyncing = false;
   DateTime? get lastSyncTime => _lastSyncTime;
 
   bool get isUsingOfflineData => _isUsingOfflineData;
-
+  bool get isBackgroundSyncing => _isBackgroundSyncing;
   bool get hasCachedData {
     return _cachedCourses != null && _cachedTasks != null;
   }
@@ -334,7 +335,20 @@ class ClassroomDataService {
       return <RealClassroomTask>[];
     }
   }
+  Future<void> startBackgroundSync() {
+    if (_runningBackgroundSync != null) {
+      return _runningBackgroundSync!;
+    }
 
+    _isBackgroundSyncing = true;
+
+    _runningBackgroundSync = refreshAllData().whenComplete(() {
+      _isBackgroundSyncing = false;
+      _runningBackgroundSync = null;
+    });
+
+    return _runningBackgroundSync!;
+  }
   Future<void> refreshAllData() async {
     try {
       await getCourses(forceRefresh: true);

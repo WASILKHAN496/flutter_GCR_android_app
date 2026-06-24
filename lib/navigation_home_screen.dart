@@ -15,7 +15,7 @@ import 'package:best_flutter_ui_templates/tasks_screen.dart';
 import 'package:best_flutter_ui_templates/workload_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:best_flutter_ui_templates/invite_friend_screen.dart';
-
+import 'package:flutter/services.dart';
 class NavigationHomeScreen extends StatefulWidget {
   const NavigationHomeScreen({super.key});
 
@@ -34,27 +34,90 @@ class _NavigationHomeScreenState extends State<NavigationHomeScreen> {
     screenView = const MyHomePage();
   }
 
-  @override
-  Widget build(BuildContext context) {
+
+  Future<void> showExitDialog() async {
     final bool isLightMode = Theme.of(context).brightness == Brightness.light;
 
-    return Container(
-      color: isLightMode ? AppTheme.nearlyWhite : AppTheme.nearlyBlack,
-      child: SafeArea(
-        top: false,
-        bottom: false,
-        child: Scaffold(
-          backgroundColor:
-          isLightMode ? AppTheme.nearlyWhite : AppTheme.nearlyBlack,
-          body: DrawerUserController(
-            screenIndex: drawerIndex,
-            drawerWidth: MediaQuery.of(context).size.width * 0.75,
-            onDrawerCall: (DrawerIndex drawerIndexData) {
-              changeIndex(drawerIndexData);
-            },
-            screenView: screenView,
+    final bool? shouldExit = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: isLightMode ? Colors.white : AppTheme.nearlyBlack,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
           ),
-        ),
+          title: Text(
+            'Exit App?',
+            style: TextStyle(
+              fontFamily: AppTheme.fontName,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: isLightMode ? AppTheme.darkText : AppTheme.white,
+            ),
+          ),
+          content: Text(
+            'Are you sure you want to exit GCR HELPER?',
+            style: TextStyle(
+              fontFamily: AppTheme.fontName,
+              fontSize: 13.5,
+              height: 1.35,
+              color: isLightMode
+                  ? const Color(0xFF555555)
+                  : Colors.white.withOpacity(0.72),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text(
+                'CANCEL',
+                style: TextStyle(
+                  fontFamily: AppTheme.fontName,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF81818A),
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text(
+                'EXIT',
+                style: TextStyle(
+                  fontFamily: AppTheme.fontName,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF2633C5),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldExit == true) {
+      SystemNavigator.pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: () async {
+        await showExitDialog();
+        return false;
+      },
+      child: DrawerUserController(
+        screenIndex: drawerIndex,
+        drawerWidth: MediaQuery.of(context).size.width * 0.75,
+        onDrawerCall: (DrawerIndex drawerIndexData) {
+          changeIndex(drawerIndexData);
+        },
+        screenView: screenView,
       ),
     );
   }

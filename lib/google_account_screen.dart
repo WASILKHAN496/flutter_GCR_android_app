@@ -6,6 +6,7 @@ import 'package:best_flutter_ui_templates/services/google_login_service.dart';
 import 'package:best_flutter_ui_templates/tasks_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class GoogleAccountScreen extends StatefulWidget {
   const GoogleAccountScreen({super.key});
@@ -20,6 +21,10 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
 
   final ScrollController scrollController = ScrollController();
 
+  static const String _cachedNameKey = 'cached_google_account_name';
+  static const String _cachedEmailKey = 'cached_google_account_email';
+  static const String _cachedPhotoKey = 'cached_google_account_photo';
+
   bool isLoading = true;
   bool isSyncing = false;
   bool autoSync = true;
@@ -28,6 +33,10 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
   String lastSyncedText = 'Not synced yet';
 
   GoogleSignInAccount? account;
+
+  String cachedName = '';
+  String cachedEmail = '';
+  String cachedPhotoUrl = '';
 
   List<RealClassroomCourse> courses = <RealClassroomCourse>[];
   List<RealClassroomTask> tasks = <RealClassroomTask>[];
@@ -45,7 +54,63 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
     loadAccount();
   }
 
-  bool get isConnected => account != null;
+  bool get hasLiveAccount => account != null;
+
+  bool get hasSavedAccount => cachedEmail.trim().isNotEmpty;
+
+  bool get isConnected => hasLiveAccount || hasSavedAccount;
+
+  bool get isOfflineSavedAccount => !hasLiveAccount && hasSavedAccount;
+
+  Color get connectionColor {
+    if (hasLiveAccount) {
+      return const Color(0xFF2ECC71);
+    }
+
+    if (hasSavedAccount) {
+      return const Color(0xFFFFA726);
+    }
+
+    return const Color(0xFFEF5350);
+  }
+
+  String get displayName {
+    final String? liveName = account?.displayName;
+
+    if (liveName != null && liveName.trim().isNotEmpty) {
+      return liveName;
+    }
+
+    if (cachedName.trim().isNotEmpty) {
+      return cachedName;
+    }
+
+    return 'No account connected';
+  }
+
+  String get displayEmail {
+    final String? liveEmail = account?.email;
+
+    if (liveEmail != null && liveEmail.trim().isNotEmpty) {
+      return liveEmail;
+    }
+
+    if (cachedEmail.trim().isNotEmpty) {
+      return cachedEmail;
+    }
+
+    return 'Connect account to sync Classroom data.';
+  }
+
+  String get displayPhotoUrl {
+    final String? livePhoto = account?.photoUrl;
+
+    if (livePhoto != null && livePhoto.trim().isNotEmpty) {
+      return livePhoto;
+    }
+
+    return cachedPhotoUrl;
+  }
 
   int get totalCourses => courses.length;
 
@@ -76,31 +141,82 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
       errorText = '';
     });
 
+    await loadCachedAccount();
+    await loadCachedClassroomSummary();
+
+    GoogleSignInAccount? user;
+
     try {
-      final GoogleSignInAccount? user =
-      await GoogleLoginService.instance.signInSilently();
+      user = await GoogleLoginService.instance.signInSilently();
 
-      if (!mounted) {
-        return;
+      if (user != null) {
+        await saveCachedAccount(user);
       }
+    } catch (_) {
+      user = null;
+    }
 
-      setState(() {
-        account = user;
-        isLoading = false;
-      });
+    if (!mounted) {
+      return;
+    }
 
-      if (user != null && autoSync) {
-        await syncClassroomData();
-      }
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
+    setState(() {
+      account = user;
+      isLoading = false;
+      lastSyncedText = ClassroomDataService.instance.lastSyncText;
+    });
 
-      setState(() {
-        isLoading = false;
-        errorText = error.toString();
-      });
+    if (user != null && autoSync) {
+      syncClassroomData(showSuccessMessage: false);
+    }
+  }
+
+  Future<void> loadCachedAccount() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    cachedName = prefs.getString(_cachedNameKey) ?? '';
+    cachedEmail = prefs.getString(_cachedEmailKey) ?? '';
+    cachedPhotoUrl = prefs.getString(_cachedPhotoKey) ?? '';
+  }
+
+  Future<void> saveCachedAccount(GoogleSignInAccount user) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString(_cachedNameKey, user.displayName ?? '');
+    await prefs.setString(_cachedEmailKey, user.email);
+    await prefs.setString(_cachedPhotoKey, user.photoUrl ?? '');
+
+    cachedName = user.displayName ?? '';
+    cachedEmail = user.email;
+    cachedPhotoUrl = user.photoUrl ?? '';
+  }
+
+  Future<void> clearCachedAccount() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    await prefs.remove(_cachedNameKey);
+    await prefs.remove(_cachedEmailKey);
+    await prefs.remove(_cachedPhotoKey);
+
+    cachedName = '';
+    cachedEmail = '';
+    cachedPhotoUrl = '';
+  }
+
+  Future<void> loadCachedClassroomSummary() async {
+    await ClassroomDataService.instance.loadOfflineCache();
+
+    if (!ClassroomDataService.instance.hasCachedData) {
+      lastSyncedText = ClassroomDataService.instance.lastSyncText;
+      return;
+    }
+
+    try {
+      courses = await ClassroomDataService.instance.getCourses();
+      tasks = await ClassroomDataService.instance.getAllCourseWork();
+      lastSyncedText = ClassroomDataService.instance.lastSyncText;
+    } catch (_) {
+      lastSyncedText = ClassroomDataService.instance.lastSyncText;
     }
   }
 
@@ -111,7 +227,8 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
     });
 
     try {
-      final GoogleSignInAccount? user = await GoogleLoginService.instance.signIn();
+      final GoogleSignInAccount? user =
+      await GoogleLoginService.instance.signIn();
 
       if (!mounted) {
         return;
@@ -125,9 +242,12 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
         return;
       }
 
+      await saveCachedAccount(user);
+
       setState(() {
         account = user;
         isLoading = false;
+        errorText = '';
       });
 
       showMessage('Google Classroom account connected.');
@@ -139,7 +259,15 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
 
       setState(() {
         isLoading = false;
-        errorText = error.toString();
+      });
+
+      if (isInternetConnectionError(error.toString())) {
+        showNoInternetDialog();
+        return;
+      }
+
+      setState(() {
+        errorText = cleanError(error.toString());
       });
     }
   }
@@ -150,8 +278,9 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
       errorText = '';
     });
 
-    ClassroomDataService.instance.clearCache();
+    await ClassroomDataService.instance.clearCache();
     await GoogleLoginService.instance.signOut();
+    await clearCachedAccount();
 
     if (!mounted) {
       return;
@@ -168,25 +297,53 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
     showMessage('Google account disconnected.');
   }
 
-  Future<void> syncClassroomData() async {
-    if (!isConnected) {
-      setState(() {
-        errorText = 'Please connect your Google account first.';
-      });
+  Future<void> syncClassroomData({
+    bool showSuccessMessage = true,
+  }) async {
+    GoogleSignInAccount? liveUser = account;
+
+    if (liveUser == null) {
+      try {
+        liveUser = await GoogleLoginService.instance.signInSilently();
+
+        if (liveUser != null) {
+          await saveCachedAccount(liveUser);
+        }
+      } catch (_) {
+        liveUser = null;
+      }
+    }
+
+    if (liveUser == null) {
+      if (hasSavedAccount) {
+        showNoInternetDialog();
+        setState(() {
+          errorText =
+          'Saved account is available offline. Internet is required to sync latest Classroom data.';
+        });
+        return;
+      }
+
+      showNoInternetDialog();
       return;
     }
 
     setState(() {
+      account = liveUser;
       isSyncing = true;
       errorText = '';
     });
 
     try {
       final List<RealClassroomCourse> fetchedCourses =
-      await ClassroomDataService.instance.getCourses();
+      await ClassroomDataService.instance.getCourses(
+        forceRefresh: true,
+      );
 
       final List<RealClassroomTask> fetchedTasks =
-      await ClassroomDataService.instance.getAllCourseWork();
+      await ClassroomDataService.instance.getAllCourseWork(
+        forceRefresh: true,
+      );
 
       if (!mounted) {
         return;
@@ -195,29 +352,38 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
       setState(() {
         courses = fetchedCourses;
         tasks = fetchedTasks;
-        lastSyncedText = currentTimeText();
+        lastSyncedText = ClassroomDataService.instance.lastSyncText;
         isSyncing = false;
+        errorText = '';
       });
 
-      showMessage('Classroom data synced successfully.');
+      if (showSuccessMessage) {
+        showMessage('Classroom data synced successfully.');
+      }
     } catch (error) {
+      await loadCachedClassroomSummary();
+
       if (!mounted) {
         return;
       }
 
       setState(() {
         isSyncing = false;
-        errorText = error.toString();
+        errorText =
+        'Sync failed. Showing saved Classroom data. ${cleanError(error.toString())}';
       });
     }
   }
 
-  String currentTimeText() {
-    final DateTime now = DateTime.now();
-    final String hour = now.hour.toString().padLeft(2, '0');
-    final String minute = now.minute.toString().padLeft(2, '0');
+  String cleanError(String error) {
+    if (error.trim().isEmpty) {
+      return 'Please check your internet connection.';
+    }
 
-    return 'Today at $hour:$minute';
+    return error
+        .replaceAll('Exception:', '')
+        .replaceAll('ApiRequestError', '')
+        .trim();
   }
 
   String dateCategory(DateTime? dateTime) {
@@ -253,12 +419,81 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
   void showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontFamily: AppTheme.fontName,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         duration: const Duration(seconds: 2),
       ),
     );
   }
+  bool isInternetConnectionError(String error) {
+    final String value = error.toLowerCase();
 
+    return value.contains('network') ||
+        value.contains('internet') ||
+        value.contains('socket') ||
+        value.contains('connection') ||
+        value.contains('failed host lookup') ||
+        value.contains('api exception: 7') ||
+        value.contains('sign_in_failed');
+  }
+
+  void showNoInternetDialog() {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        final bool isLightMode =
+            Theme.of(dialogContext).brightness == Brightness.light;
+
+        return AlertDialog(
+          backgroundColor: isLightMode ? Colors.white : AppTheme.nearlyBlack,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          title: Text(
+            'No Internet Connection',
+            style: TextStyle(
+              fontFamily: AppTheme.fontName,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: isLightMode ? AppTheme.darkText : AppTheme.white,
+            ),
+          ),
+          content: Text(
+            'No Internet connection. Make sure that Wi-Fi or mobile data is turned on, then try again.',
+            style: TextStyle(
+              fontFamily: AppTheme.fontName,
+              fontSize: 13.5,
+              height: 1.35,
+              color: isLightMode
+                  ? const Color(0xFF555555)
+                  : Colors.white.withOpacity(0.72),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+              },
+              child: const Text(
+                'OK',
+                style: TextStyle(
+                  fontFamily: AppTheme.fontName,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF2633C5),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
   @override
   void dispose() {
     animationController.dispose();
@@ -368,7 +603,12 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
           isLightMode: isLightMode,
         ),
         Padding(
-          padding: const EdgeInsets.only(left: 20, right: 20, top: 10, bottom: 12),
+          padding: const EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 10,
+            bottom: 12,
+          ),
           child: Row(
             children: <Widget>[
               accountAvatar(),
@@ -378,9 +618,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      isLoading
-                          ? 'Checking account...'
-                          : account?.displayName ?? 'No account connected',
+                      isLoading ? 'Checking account...' : displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -393,15 +631,15 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      account?.email ?? 'Connect account to sync Classroom data.',
-                      maxLines: 1,
+                      accountSubtitle,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontFamily: AppTheme.fontName,
                         fontSize: 12.5,
                         height: 1.25,
                         color: isConnected
-                            ? const Color(0xFF2ECC71)
+                            ? connectionColor
                             : isLightMode
                             ? const Color(0xFF81818A)
                             : Colors.white.withOpacity(0.65),
@@ -412,28 +650,26 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
               ),
               const SizedBox(width: 10),
               Icon(
-                isConnected
-                    ? Icons.check_circle_rounded
-                    : Icons.info_outline_rounded,
-                color: isConnected
-                    ? const Color(0xFF2ECC71)
-                    : const Color(0xFFFFA726),
+                connectionIcon,
+                color: connectionColor,
                 size: 25,
               ),
             ],
           ),
         ),
         settingArrowTile(
-          title: isConnected ? 'Reconnect Google Account' : 'Connect Google Account',
+          title: isConnected
+              ? 'Reconnect Google Account'
+              : 'Connect Google Account',
           subtitle: isConnected
-              ? 'Refresh permissions and account connection.'
+              ? 'Refresh permissions and restore online Google session.'
               : 'Login with your student Google account.',
           isLightMode: isLightMode,
           onTap: loginGoogle,
         ),
         settingArrowTile(
           title: 'Disconnect Account',
-          subtitle: 'Logout and clear synced Classroom data from this session.',
+          subtitle: 'Logout and clear saved Classroom data from this device.',
           isLightMode: isLightMode,
           textColor: const Color(0xFFEF5350),
           onTap: isConnected ? logoutGoogle : null,
@@ -442,12 +678,42 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
     );
   }
 
+  String get accountSubtitle {
+    if (isLoading) {
+      return 'Checking saved and online account...';
+    }
+
+    if (hasLiveAccount) {
+      return '$displayEmail • Online account active';
+    }
+
+    if (hasSavedAccount) {
+      return '$displayEmail • Saved offline account';
+    }
+
+    return 'Connect account to sync Classroom data.';
+  }
+
+  IconData get connectionIcon {
+    if (hasLiveAccount) {
+      return Icons.check_circle_rounded;
+    }
+
+    if (hasSavedAccount) {
+      return Icons.cloud_off_rounded;
+    }
+
+    return Icons.info_outline_rounded;
+  }
+
   Widget accountAvatar() {
-    if (account?.photoUrl != null) {
+    final String photoUrl = displayPhotoUrl;
+
+    if (hasLiveAccount && photoUrl.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: Image.network(
-          account!.photoUrl!,
+          photoUrl,
           height: 48,
           width: 48,
           fit: BoxFit.cover,
@@ -464,14 +730,16 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
       height: 48,
       width: 48,
       decoration: BoxDecoration(
-        color: isConnected
-            ? const Color(0xFF2ECC71).withOpacity(0.13)
-            : const Color(0xFFFFA726).withOpacity(0.15),
+        color: connectionColor.withOpacity(0.13),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Icon(
-        isConnected ? Icons.verified_user_rounded : Icons.person_outline_rounded,
-        color: isConnected ? const Color(0xFF2ECC71) : const Color(0xFFFFA726),
+        hasLiveAccount
+            ? Icons.verified_user_rounded
+            : hasSavedAccount
+            ? Icons.account_circle_rounded
+            : Icons.person_outline_rounded,
+        color: connectionColor,
         size: 27,
       ),
     );
@@ -488,7 +756,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
         ),
         settingSwitchTile(
           title: 'Auto Sync',
-          subtitle: 'Automatically fetch courses and assignments when opened.',
+          subtitle: 'Automatically sync when online. Offline mode keeps saved data visible.',
           value: autoSync,
           isLightMode: isLightMode,
           onChanged: (bool value) {
@@ -501,6 +769,8 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
           title: 'Sync Classroom Data',
           subtitle: isSyncing
               ? 'Syncing courses, tasks and deadlines...'
+              : isOfflineSavedAccount
+              ? 'Internet required. Last saved: $lastSyncedText'
               : 'Last synced: $lastSyncedText',
           isLightMode: isLightMode,
           onTap: isSyncing ? null : syncClassroomData,
@@ -571,7 +841,9 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
         height: 92,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isLightMode ? const Color(0xFFF7F7FA) : Colors.white.withOpacity(0.06),
+          color: isLightMode
+              ? const Color(0xFFF7F7FA)
+              : Colors.white.withOpacity(0.06),
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
@@ -609,13 +881,13 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         sectionHeader(
-          title: 'OPEN CLASSROOM DATA',
-          icon: Icons.open_in_new_rounded,
+          title: 'VIEW DASHBOARD DATA',
+          icon: Icons.dashboard_customize_rounded,
           isLightMode: isLightMode,
         ),
         settingArrowTile(
           title: 'View Courses',
-          subtitle: 'Open real Google Classroom courses.',
+          subtitle: 'Open all courses loaded from your Google Classroom account.',
           isLightMode: isLightMode,
           onTap: () {
             Navigator.push<dynamic>(
@@ -627,8 +899,8 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
           },
         ),
         settingArrowTile(
-          title: 'View Assignments',
-          subtitle: 'Open real coursework and tasks.',
+          title: 'View All Assignments',
+          subtitle: 'Open submitted, pending and late assignments together.',
           isLightMode: isLightMode,
           onTap: () {
             Navigator.push<dynamic>(
@@ -641,8 +913,50 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
           },
         ),
         settingArrowTile(
+          title: 'View Submitted Assignments',
+          subtitle: 'Open assignments already submitted on Google Classroom.',
+          isLightMode: isLightMode,
+          onTap: () {
+            Navigator.push<dynamic>(
+              context,
+              MaterialPageRoute<dynamic>(
+                builder: (BuildContext context) =>
+                const TasksScreen(initialFilter: 'Submitted'),
+              ),
+            );
+          },
+        ),
+        settingArrowTile(
+          title: 'View Pending Assignments',
+          subtitle: 'Open assignments that still need to be submitted.',
+          isLightMode: isLightMode,
+          onTap: () {
+            Navigator.push<dynamic>(
+              context,
+              MaterialPageRoute<dynamic>(
+                builder: (BuildContext context) =>
+                const TasksScreen(initialFilter: 'Pending'),
+              ),
+            );
+          },
+        ),
+        settingArrowTile(
+          title: 'View Late Not Submitted',
+          subtitle: 'Open overdue assignments that are not submitted yet.',
+          isLightMode: isLightMode,
+          onTap: () {
+            Navigator.push<dynamic>(
+              context,
+              MaterialPageRoute<dynamic>(
+                builder: (BuildContext context) =>
+                const TasksScreen(initialFilter: 'Late'),
+              ),
+            );
+          },
+        ),
+        settingArrowTile(
           title: 'View Deadlines',
-          subtitle: 'Open upcoming due dates and reminder timeline.',
+          subtitle: 'Open due dates and deadline timeline.',
           isLightMode: isLightMode,
           onTap: () {
             Navigator.push<dynamic>(
@@ -688,9 +1002,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
                   top: 0,
                   child: CircleAvatar(
                     radius: 5,
-                    backgroundColor: isConnected
-                        ? const Color(0xFF2ECC71)
-                        : const Color(0xFFFFA726),
+                    backgroundColor: connectionColor,
                   ),
                 ),
               ],
@@ -779,7 +1091,9 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
               padding: const EdgeInsets.only(top: 5),
               child: Icon(
                 Icons.chevron_right_rounded,
-                color: isLightMode
+                color: onTap == null
+                    ? Colors.grey.withOpacity(0.45)
+                    : isLightMode
                     ? const Color(0xFF4A4A4A)
                     : Colors.white.withOpacity(0.75),
                 size: 24,

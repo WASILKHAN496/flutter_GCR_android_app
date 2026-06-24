@@ -12,6 +12,8 @@ import 'package:best_flutter_ui_templates/tasks_screen.dart';
 import 'package:best_flutter_ui_templates/workload_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:async';
+import 'dart:io';
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
@@ -31,6 +33,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool isLoading = true;
   bool isOfflineMode = false;
   bool isBackgroundSyncing = false;
+  bool hasInternetConnection = true;
+
+  Timer? networkStatusTimer;
 
   String errorText = '';
   String studentName = 'Student';
@@ -59,6 +64,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     animationController.forward();
 
     loadDashboardData().then((_) {
+      startNetworkWatcher();
       startBackgroundSync();
     });
   }
@@ -164,9 +170,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     });
 
     try {
-      await GoogleLoginService.instance.signInSilently();
-
-      await ClassroomDataService.instance.refreshAllData();
+      await ClassroomDataService.instance.startBackgroundSync();
 
       final List<RealClassroomCourse> syncedCourses =
       await ClassroomDataService.instance.getCourses();
@@ -174,18 +178,14 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       final List<RealClassroomTask> syncedTasks =
       await ClassroomDataService.instance.getAllCourseWork();
 
-      final GoogleSignInAccount? account =
-          GoogleLoginService.instance.currentUser;
-
       if (!mounted) {
         return;
       }
 
       setState(() {
-        studentName = firstName(account?.displayName);
         realCourses = syncedCourses;
         realTasks = syncedTasks;
-        isOfflineMode = false;
+        isOfflineMode = ClassroomDataService.instance.isUsingOfflineData;
         syncStatusText = ClassroomDataService.instance.lastSyncText;
         isBackgroundSyncing = false;
         errorText = '';
@@ -199,6 +199,48 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         isBackgroundSyncing = false;
         isOfflineMode = ClassroomDataService.instance.isUsingOfflineData;
         syncStatusText = ClassroomDataService.instance.lastSyncText;
+      });
+    }
+  }
+  void startNetworkWatcher() {
+    networkStatusTimer?.cancel();
+
+    checkInternetConnection();
+
+    networkStatusTimer = Timer.periodic(
+      const Duration(seconds: 5),
+          (_) {
+        checkInternetConnection();
+      },
+    );
+  }
+
+  Future<void> checkInternetConnection() async {
+    bool connected = false;
+
+    try {
+      final List<InternetAddress> result =
+      await InternetAddress.lookup('google.com').timeout(
+        const Duration(seconds: 2),
+      );
+
+      connected = result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+    } catch (_) {
+      connected = false;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    if (hasInternetConnection != connected) {
+      setState(() {
+        hasInternetConnection = connected;
+
+        if (!connected) {
+          isOfflineMode = true;
+          syncStatusText = ClassroomDataService.instance.lastSyncText;
+        }
       });
     }
   }
@@ -372,6 +414,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   @override
   void dispose() {
     animationController.dispose();
+    networkStatusTimer?.cancel();
     scrollController.removeListener(updateTopBarOpacity);
     scrollController.dispose();
     super.dispose();
@@ -817,6 +860,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   Text(
                     isBackgroundSyncing
                         ? 'Syncing in Background'
+                        : !hasInternetConnection
+                        ? 'No Internet Connection'
                         : isOfflineMode
                         ? 'Offline Mode Active'
                         : 'Online Sync Active',
@@ -831,6 +876,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   Text(
                     isBackgroundSyncing
                         ? 'Showing saved data now. New Classroom updates are loading silently.'
+                        : !hasInternetConnection
+                        ? 'Internet is off. Showing saved Classroom data. $syncStatusText'
                         : isOfflineMode
                         ? 'Showing last saved Classroom data. $syncStatusText'
                         : 'Google Classroom data is updated. Last sync: $syncStatusText',
