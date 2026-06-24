@@ -7,7 +7,8 @@ import 'package:best_flutter_ui_templates/tasks_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:best_flutter_ui_templates/services/notification_service.dart';
+import 'package:best_flutter_ui_templates/services/notification_service.dart';
 class GoogleAccountScreen extends StatefulWidget {
   const GoogleAccountScreen({super.key});
 
@@ -271,6 +272,37 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
       });
     }
   }
+  Future<void> sendTestNotification() async {
+    try {
+      await NotificationService.instance.showTestNotification();
+      showMessage('Test notification sent.');
+    } catch (error) {
+      setState(() {
+        errorText = 'Unable to show notification. ${cleanError(error.toString())}';
+      });
+    }
+  }
+  Future<void> forceSendClassroomNotifications() async {
+    try {
+      List<RealClassroomTask> notificationTasks = tasks;
+
+      if (notificationTasks.isEmpty) {
+        notificationTasks = await ClassroomDataService.instance.getAllCourseWork();
+      }
+
+      await NotificationService.instance.showClassroomSummaryNotifications(
+        tasks: notificationTasks,
+        force: true,
+      );
+
+      showMessage('Classroom notifications sent for testing.');
+    } catch (error) {
+      setState(() {
+        errorText =
+        'Unable to send classroom notifications. ${cleanError(error.toString())}';
+      });
+    }
+  }
 
   Future<void> logoutGoogle() async {
     setState(() {
@@ -356,6 +388,9 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
         isSyncing = false;
         errorText = '';
       });
+      await NotificationService.instance.showClassroomSummaryNotifications(
+        tasks: fetchedTasks,
+      );
 
       if (showSuccessMessage) {
         showMessage('Classroom data synced successfully.');
@@ -774,6 +809,18 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
               : 'Last synced: $lastSyncedText',
           isLightMode: isLightMode,
           onTap: isSyncing ? null : syncClassroomData,
+        ),
+        settingArrowTile(
+          title: 'Test Phone Notification',
+          subtitle: 'Send one test notification to check Android notification setup.',
+          isLightMode: isLightMode,
+          onTap: sendTestNotification,
+        ),
+        settingArrowTile(
+          title: 'Force Send Classroom Notifications',
+          subtitle: 'Testing only: send due today, due soon and late alerts again.',
+          isLightMode: isLightMode,
+          onTap: forceSendClassroomNotifications,
         ),
       ],
     );
