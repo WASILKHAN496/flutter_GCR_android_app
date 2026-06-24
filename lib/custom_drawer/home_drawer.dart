@@ -35,6 +35,11 @@ class _HomeDrawerState extends State<HomeDrawer> {
         icon: const Icon(Icons.dashboard_rounded),
       ),
       DrawerList(
+        index: DrawerIndex.Notifications,
+        labelName: 'Notifications',
+        icon: const Icon(Icons.notifications_active_rounded),
+      ),
+      DrawerList(
         index: DrawerIndex.Help,
         labelName: 'Help',
         icon: const Icon(Icons.help_outline_rounded),
@@ -409,6 +414,7 @@ class _HomeDrawerState extends State<HomeDrawer> {
 
 enum DrawerIndex {
   HOME,
+  Notifications,
   Help,
   FeedBack,
   Invite,
@@ -423,7 +429,6 @@ enum DrawerIndex {
   Tasks,
   Deadlines,
   Workload,
-  Notifications,
 }
 
 class DrawerList {

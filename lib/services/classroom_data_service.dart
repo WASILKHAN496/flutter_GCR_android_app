@@ -530,14 +530,15 @@ class ClassroomDataService {
       return null;
     }
 
-    return DateTime(
+    return DateTime.utc(
       date.year!,
       date.month!,
       date.day!,
       time?.hours ?? 23,
       time?.minutes ?? 59,
-    );
+    ).toLocal();
   }
+
 }
 
 class RealClassroomCourse {
@@ -611,9 +612,10 @@ class RealClassroomTask {
       workType: json['workType'] as String? ?? '',
       alternateLink: json['alternateLink'] as String? ?? '',
       maxPoints: (json['maxPoints'] as num?)?.toDouble(),
-      dueDateTime: DateTime.tryParse(json['dueDateTime'] as String? ?? ''),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
+      dueDateTime:
+      DateTime.tryParse(json['dueDateTime'] as String? ?? '')?.toLocal(),
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '')?.toLocal(),
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '')?.toLocal(),
       submissionState: json['submissionState'] as String? ?? '',
       isLateSubmission: json['isLateSubmission'] as bool? ?? false,
       assignedGrade: (json['assignedGrade'] as num?)?.toDouble(),

@@ -295,6 +295,7 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
         force: true,
       );
 
+
       showMessage('Classroom notifications sent for testing.');
     } catch (error) {
       setState(() {
@@ -391,7 +392,13 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
       await NotificationService.instance.showClassroomSummaryNotifications(
         tasks: fetchedTasks,
       );
-
+      await NotificationService.instance.scheduleAssignmentReminderNotifications(
+        tasks: fetchedTasks,
+      );
+      await NotificationService.instance.showSyncCompleteNotification(
+        totalCourses: fetchedCourses.length,
+        totalTasks: fetchedTasks.length,
+      );
       if (showSuccessMessage) {
         showMessage('Classroom data synced successfully.');
       }
@@ -817,8 +824,8 @@ class _GoogleAccountScreenState extends State<GoogleAccountScreen>
           onTap: sendTestNotification,
         ),
         settingArrowTile(
-          title: 'Force Send Classroom Notifications',
-          subtitle: 'Testing only: send due today, due soon and late alerts again.',
+          title: 'Send Reminder Now',
+          subtitle: 'Send due today, due soon and late assignment reminders now.',
           isLightMode: isLightMode,
           onTap: forceSendClassroomNotifications,
         ),

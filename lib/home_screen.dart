@@ -14,7 +14,11 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:async';
 import 'dart:io';
-
+import 'package:best_flutter_ui_templates/services/app_guide_service.dart';
+import 'package:best_flutter_ui_templates/notifications_screen.dart';
+import 'package:best_flutter_ui_templates/services/notification_service.dart';
+import 'package:best_flutter_ui_templates/services/notification_service.dart';
+//line 183 to change to force notification
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
 
@@ -34,7 +38,8 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
   bool isOfflineMode = false;
   bool isBackgroundSyncing = false;
   bool hasInternetConnection = true;
-
+  GoogleSignInAccount? dashboardAccount;
+  bool hasCheckedWelcomeGuide = false;
   Timer? networkStatusTimer;
 
   String errorText = '';
@@ -66,6 +71,9 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     loadDashboardData().then((_) {
       startNetworkWatcher();
       startBackgroundSync();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showFirstTimeGuideIfNeeded();
     });
   }
 
@@ -107,7 +115,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
       final GoogleSignInAccount? account =
           GoogleLoginService.instance.currentUser;
-
+      dashboardAccount = account;
       if (!mounted) {
         return;
       }
@@ -177,7 +185,17 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
       final List<RealClassroomTask> syncedTasks =
       await ClassroomDataService.instance.getAllCourseWork();
-
+      await NotificationService.instance.showClassroomSummaryNotifications(
+        tasks: syncedTasks,
+        //force: true,
+      );
+      await NotificationService.instance.scheduleAssignmentReminderNotifications(
+        tasks: syncedTasks,
+      );
+      await NotificationService.instance.showSyncCompleteNotification(
+        totalCourses: syncedCourses.length,
+        totalTasks: syncedTasks.length,
+      );
       if (!mounted) {
         return;
       }
@@ -244,6 +262,189 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       });
     }
   }
+  Future<void> showFirstTimeGuideIfNeeded() async {
+    if (hasCheckedWelcomeGuide) {
+      return;
+    }
+
+    hasCheckedWelcomeGuide = true;
+
+    final bool shouldShow =
+    await AppGuideService.instance.shouldShowWelcomeGuide();
+
+    if (!mounted || !shouldShow) {
+      return;
+    }
+
+    showWelcomeGuideDialog();
+  }
+
+  void showWelcomeGuideDialog() {
+    final bool isLightMode = Theme.of(context).brightness == Brightness.light;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: isLightMode ? Colors.white : AppTheme.nearlyBlack,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Text(
+            'Welcome to GCR HELPER',
+            style: TextStyle(
+              fontFamily: AppTheme.fontName,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: isLightMode ? AppTheme.darkText : AppTheme.white,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              guideStep(
+                number: '1',
+                title: 'Connect Account',
+                subtitle: 'Login with your Google Classroom account.',
+                isLightMode: isLightMode,
+              ),
+              guideStep(
+                number: '2',
+                title: 'Sync Data',
+                subtitle: 'The app loads your courses, tasks and deadlines.',
+                isLightMode: isLightMode,
+              ),
+              guideStep(
+                number: '3',
+                title: 'Check Alerts',
+                subtitle: 'See Late, Due Today and Due Soon assignments.',
+                isLightMode: isLightMode,
+              ),
+              guideStep(
+                number: '4',
+                title: 'Use Reminders',
+                subtitle: 'Get phone notifications even when app is closed.',
+                isLightMode: isLightMode,
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () async {
+                await AppGuideService.instance.markWelcomeGuideSeen();
+
+                if (!dialogContext.mounted) {
+                  return;
+                }
+
+                Navigator.pop(dialogContext);
+              },
+              child: const Text(
+                'MAYBE LATER',
+                style: TextStyle(
+                  fontFamily: AppTheme.fontName,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF81818A),
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                await AppGuideService.instance.markWelcomeGuideSeen();
+
+                if (!dialogContext.mounted) {
+                  return;
+                }
+
+                Navigator.pop(dialogContext);
+
+                Navigator.push<dynamic>(
+                  context,
+                  MaterialPageRoute<dynamic>(
+                    builder: (BuildContext context) =>
+                    const GoogleAccountScreen(),
+                  ),
+                ).then((_) => loadDashboardData());
+              },
+              child: const Text(
+                'GET STARTED',
+                style: TextStyle(
+                  fontFamily: AppTheme.fontName,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF2633C5),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget guideStep({
+    required String number,
+    required String title,
+    required String subtitle,
+    required bool isLightMode,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            height: 28,
+            width: 28,
+            decoration: const BoxDecoration(
+              color: Color(0xFF2633C5),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                number,
+                style: const TextStyle(
+                  fontFamily: AppTheme.fontName,
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontFamily: AppTheme.fontName,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: isLightMode ? AppTheme.darkText : AppTheme.white,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontFamily: AppTheme.fontName,
+                    fontSize: 12.5,
+                    height: 1.3,
+                    color: isLightMode
+                        ? AppTheme.grey
+                        : Colors.white.withOpacity(0.65),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   String firstName(String? name) {
     if (name == null || name.trim().isEmpty) {
       return 'Student';
@@ -259,7 +460,29 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       return deadlineCategory(task.dueDateTime) == 'Today';
     }).length;
   }
+  int get dashboardLateAlertCount {
+    return realTasks.where((RealClassroomTask task) {
+      return task.submissionStatus == 'Late Not Submitted';
+    }).length;
+  }
 
+  int get dashboardDueTodayAlertCount {
+    return realTasks.where((RealClassroomTask task) {
+      return NotificationService.instance.isDueTodayAndNotSubmitted(task);
+    }).length;
+  }
+
+  int get dashboardDueSoonAlertCount {
+    return realTasks.where((RealClassroomTask task) {
+      return NotificationService.instance.isDueSoonAndNotSubmitted(task);
+    }).length;
+  }
+
+  int get dashboardTotalAlertCount {
+    return dashboardLateAlertCount +
+        dashboardDueTodayAlertCount +
+        dashboardDueSoonAlertCount;
+  }
   int get upcomingCount {
     return realTasks.where((RealClassroomTask task) {
       final String category = deadlineCategory(task.dueDateTime);
@@ -437,6 +660,484 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       ),
     );
   }
+  String get smartGuideTitle {
+    if (dashboardAccount == null) {
+      return 'Connect your Google account';
+    }
+
+    if (isLoading || isBackgroundSyncing) {
+      return 'Syncing your Classroom data';
+    }
+
+    if (realCourses.isEmpty && realTasks.isEmpty) {
+      return 'Sync Classroom data';
+    }
+
+    if (dashboardLateAlertCount > 0) {
+      return 'View late assignments';
+    }
+
+    if (dashboardDueTodayAlertCount > 0) {
+      return 'Check today’s deadlines';
+    }
+
+    if (dashboardDueSoonAlertCount > 0) {
+      return 'Plan upcoming assignments';
+    }
+
+    return 'You are all caught up';
+  }
+
+  String get smartGuideSubtitle {
+    if (dashboardAccount == null) {
+      return 'Start by connecting your Google Classroom account.';
+    }
+
+    if (isLoading || isBackgroundSyncing) {
+      return 'Please wait. The app is loading latest courses and assignments.';
+    }
+
+    if (realCourses.isEmpty && realTasks.isEmpty) {
+      return 'No Classroom data found yet. Try syncing again.';
+    }
+
+    if (dashboardLateAlertCount > 0) {
+      return '$dashboardLateAlertCount assignment(s) are late and not submitted.';
+    }
+
+    if (dashboardDueTodayAlertCount > 0) {
+      return '$dashboardDueTodayAlertCount assignment(s) are due today.';
+    }
+
+    if (dashboardDueSoonAlertCount > 0) {
+      return '$dashboardDueSoonAlertCount assignment(s) are due soon.';
+    }
+
+    return 'No urgent work right now. Keep checking your dashboard.';
+  }
+
+  String get smartGuideButtonText {
+    if (dashboardAccount == null) {
+      return 'Connect';
+    }
+
+    if (isLoading || isBackgroundSyncing) {
+      return 'Syncing';
+    }
+
+    if (realCourses.isEmpty && realTasks.isEmpty) {
+      return 'Sync Now';
+    }
+
+    if (dashboardLateAlertCount > 0) {
+      return 'Open Late';
+    }
+
+    if (dashboardDueTodayAlertCount > 0) {
+      return 'Open Today';
+    }
+
+    if (dashboardDueSoonAlertCount > 0) {
+      return 'Deadlines';
+    }
+
+    return 'Reminders';
+  }
+
+  IconData get smartGuideIcon {
+    if (dashboardAccount == null) {
+      return Icons.login_rounded;
+    }
+
+    if (isLoading || isBackgroundSyncing) {
+      return Icons.sync_rounded;
+    }
+
+    if (dashboardLateAlertCount > 0) {
+      return Icons.warning_rounded;
+    }
+
+    if (dashboardDueTodayAlertCount > 0) {
+      return Icons.today_rounded;
+    }
+
+    if (dashboardDueSoonAlertCount > 0) {
+      return Icons.date_range_rounded;
+    }
+
+    return Icons.check_circle_rounded;
+  }
+
+  Color get smartGuideColor {
+    if (dashboardAccount == null) {
+      return const Color(0xFF2633C5);
+    }
+
+    if (isLoading || isBackgroundSyncing) {
+      return const Color(0xFF42A5F5);
+    }
+
+    if (dashboardLateAlertCount > 0) {
+      return const Color(0xFFEF5350);
+    }
+
+    if (dashboardDueTodayAlertCount > 0) {
+      return const Color(0xFFFFA726);
+    }
+
+    if (dashboardDueSoonAlertCount > 0) {
+      return const Color(0xFF42A5F5);
+    }
+
+    return const Color(0xFF66BB6A);
+  }
+
+  void handleSmartGuideAction() {
+    if (dashboardAccount == null) {
+      Navigator.push<dynamic>(
+        context,
+        MaterialPageRoute<dynamic>(
+          builder: (BuildContext context) => const GoogleAccountScreen(),
+        ),
+      ).then((_) => loadDashboardData());
+      return;
+    }
+
+    if (isLoading || isBackgroundSyncing) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sync is running. Please wait a moment.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (realCourses.isEmpty && realTasks.isEmpty) {
+      Navigator.push<dynamic>(
+        context,
+        MaterialPageRoute<dynamic>(
+          builder: (BuildContext context) => const GoogleAccountScreen(),
+        ),
+      ).then((_) => loadDashboardData());
+      return;
+    }
+
+    if (dashboardLateAlertCount > 0) {
+      Navigator.push<dynamic>(
+        context,
+        MaterialPageRoute<dynamic>(
+          builder: (BuildContext context) =>
+          const TasksScreen(initialFilter: 'Late'),
+        ),
+      );
+      return;
+    }
+
+    if (dashboardDueTodayAlertCount > 0) {
+      Navigator.push<dynamic>(
+        context,
+        MaterialPageRoute<dynamic>(
+          builder: (BuildContext context) =>
+          const TasksScreen(initialFilter: 'Due Today'),
+        ),
+      );
+      return;
+    }
+
+    if (dashboardDueSoonAlertCount > 0) {
+      Navigator.push<dynamic>(
+        context,
+        MaterialPageRoute<dynamic>(
+          builder: (BuildContext context) => const DeadlinesScreen(),
+        ),
+      );
+      return;
+    }
+
+    Navigator.push<dynamic>(
+      context,
+      MaterialPageRoute<dynamic>(
+        builder: (BuildContext context) => const NotificationsScreen(),
+      ),
+    );
+  }
+
+  Widget buildSmartGuideCard(bool isLightMode) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, right: 24, bottom: 18),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isLightMode ? Colors.white : Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: isLightMode
+                  ? AppTheme.grey.withOpacity(0.15)
+                  : Colors.black.withOpacity(0.22),
+              offset: const Offset(1, 3),
+              blurRadius: 10,
+            ),
+          ],
+        ),
+        child: Row(
+          children: <Widget>[
+            Container(
+              height: 52,
+              width: 52,
+              decoration: BoxDecoration(
+                color: smartGuideColor.withOpacity(0.13),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(
+                smartGuideIcon,
+                color: smartGuideColor,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    'What should I do next?',
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontName,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: isLightMode
+                          ? AppTheme.grey
+                          : Colors.white.withOpacity(0.65),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    smartGuideTitle,
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontName,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: isLightMode ? AppTheme.darkText : AppTheme.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    smartGuideSubtitle,
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontName,
+                      fontSize: 12.5,
+                      height: 1.35,
+                      color: isLightMode
+                          ? AppTheme.grey
+                          : Colors.white.withOpacity(0.68),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: handleSmartGuideAction,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: smartGuideColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  smartGuideButtonText,
+                  style: TextStyle(
+                    fontFamily: AppTheme.fontName,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: smartGuideColor,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  Widget buildNotificationCountCard(bool isLightMode) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, right: 24, bottom: 18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () {
+          Navigator.push<dynamic>(
+            context,
+            MaterialPageRoute<dynamic>(
+              builder: (BuildContext context) => const NotificationsScreen(),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isLightMode ? Colors.white : Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: isLightMode
+                    ? AppTheme.grey.withOpacity(0.15)
+                    : Colors.black.withOpacity(0.22),
+                offset: const Offset(1, 3),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Container(
+                    height: 46,
+                    width: 46,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFA726).withOpacity(0.13),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(
+                      Icons.notifications_active_rounded,
+                      color: Color(0xFFFFA726),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Classroom Alerts',
+                          style: TextStyle(
+                            fontFamily: AppTheme.fontName,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: isLightMode
+                                ? AppTheme.darkText
+                                : AppTheme.white,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          dashboardTotalAlertCount == 0
+                              ? 'No urgent assignment reminders right now.'
+                              : '$dashboardTotalAlertCount important reminders found.',
+                          style: TextStyle(
+                            fontFamily: AppTheme.fontName,
+                            fontSize: 12.5,
+                            height: 1.3,
+                            color: isLightMode
+                                ? AppTheme.grey
+                                : AppTheme.white.withOpacity(0.65),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: isLightMode
+                        ? AppTheme.grey
+                        : Colors.white.withOpacity(0.65),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: <Widget>[
+                  alertCountBox(
+                    title: 'Late',
+                    value: dashboardLateAlertCount.toString(),
+                    color: const Color(0xFFEF5350),
+                    icon: Icons.warning_rounded,
+                    isLightMode: isLightMode,
+                  ),
+                  const SizedBox(width: 10),
+                  alertCountBox(
+                    title: 'Today',
+                    value: dashboardDueTodayAlertCount.toString(),
+                    color: const Color(0xFFFFA726),
+                    icon: Icons.today_rounded,
+                    isLightMode: isLightMode,
+                  ),
+                  const SizedBox(width: 10),
+                  alertCountBox(
+                    title: 'Due Soon',
+                    value: dashboardDueSoonAlertCount.toString(),
+                    color: const Color(0xFF42A5F5),
+                    icon: Icons.date_range_rounded,
+                    isLightMode: isLightMode,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget alertCountBox({
+    required String title,
+    required String value,
+    required Color color,
+    required IconData icon,
+    required bool isLightMode,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: color.withOpacity(0.18),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Icon(
+              icon,
+              color: color,
+              size: 20,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: TextStyle(
+                fontFamily: AppTheme.fontName,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: AppTheme.fontName,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: isLightMode
+                    ? AppTheme.grey
+                    : Colors.white.withOpacity(0.68),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget getMainListViewUI(bool isLightMode) {
     return RefreshIndicator(
@@ -459,18 +1160,18 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
         children: <Widget>[
           animatedItem(
             index: 0,
-            count: 12,
+            count: 14,
             child: overviewCard(isLightMode),
           ),
           if (!isLoading)
             animatedItem(
               index: 1,
-              count: 12,
+              count: 14,
               child: syncStatusBanner(isLightMode),
             ),
           animatedItem(
             index: 2,
-            count: 12,
+            count: 14,
             child: sectionTitle(
               title: 'Quick Actions',
               subtitle: 'Open fast',
@@ -479,12 +1180,22 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
           ),
           animatedItem(
             index: 3,
-            count: 12,
+            count: 14,
             child: quickActions(isLightMode),
           ),
           animatedItem(
             index: 4,
-            count: 12,
+            count: 14,
+            child: buildNotificationCountCard(isLightMode),
+          ),
+          animatedItem(
+            index: 5,
+            count: 14,
+            child: buildSmartGuideCard(isLightMode),
+          ),
+          animatedItem(
+            index: 6,
+            count: 14,
             child: sectionTitle(
               title: 'Workload Overview',
               subtitle: multiple ? 'Grid view' : 'List view',
@@ -492,25 +1203,25 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             ),
           ),
           animatedItem(
-            index: 5,
-            count: 12,
+            index: 7,
+            count: 14,
             child: dashboardGrid(),
           ),
           if (isLoading)
             animatedItem(
-              index: 6,
-              count: 12,
+              index: 8,
+              count: 14,
               child: loadingCard(isLightMode),
             ),
           if (!isLoading && errorText.isNotEmpty)
             animatedItem(
-              index: 6,
-              count: 12,
+              index: 8,
+              count: 14,
               child: errorCard(isLightMode),
             ),
           animatedItem(
-            index: 7,
-            count: 12,
+            index: 9,
+            count: 14,
             child: sectionTitle(
               title: 'Upcoming Deadlines',
               subtitle: 'Nearest first',
@@ -518,13 +1229,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             ),
           ),
           animatedItem(
-            index: 8,
-            count: 12,
+            index: 10,
+            count: 14,
             child: taskList(isLightMode),
           ),
           animatedItem(
-            index: 9,
-            count: 12,
+            index: 11,
+            count: 14,
             child: sectionTitle(
               title: 'Course Progress',
               subtitle: 'This week',
@@ -532,13 +1243,13 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
             ),
           ),
           animatedItem(
-            index: 10,
-            count: 12,
+            index: 12,
+            count: 14,
             child: courseList(isLightMode),
           ),
           animatedItem(
-            index: 11,
-            count: 12,
+            index: 13,
+            count: 14,
             child: googleClassroomCard(isLightMode),
           ),
         ],
@@ -748,14 +1459,17 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                         fontWeight: FontWeight.w700,
                         color: Colors.white,
                       ),
+
                     ),
+
                     const SizedBox(height: 8),
+
                     Text(
 
                         errorText.isNotEmpty
                             ? 'Connect your Google account to load real courses, tasks and deadlines.'
                             : isOfflineMode
-                            ? 'Offline mode is active. Showing last saved data for ${realCourses.length} courses and $pendingCount tasks.'
+                            ? 'Waiting for internet connection... Showing last saved data for ${realCourses.length} courses and $pendingCount tasks.'
                             : 'Tracking ${realCourses.length} courses and $pendingCount active Classroom tasks in one place.',
                       style: const TextStyle(
                         fontFamily: AppTheme.fontName,

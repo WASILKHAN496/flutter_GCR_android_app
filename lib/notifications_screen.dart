@@ -1,6 +1,7 @@
 import 'package:best_flutter_ui_templates/app_theme.dart';
 import 'package:best_flutter_ui_templates/services/classroom_data_service.dart';
 import 'package:best_flutter_ui_templates/services/google_login_service.dart';
+import 'package:best_flutter_ui_templates/services/notification_service.dart';
 import 'package:best_flutter_ui_templates/task_detail_screen.dart';
 import 'package:flutter/material.dart';
 
@@ -19,20 +20,27 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   double topBarOpacity = 0.0;
   bool isLoading = true;
-  bool reminderEnabled = true;
-  bool todayOnly = false;
+  bool isSendingReminder = false;
 
   String selectedFilter = 'All';
   String errorText = '';
 
   List<RealClassroomTask> tasks = <RealClassroomTask>[];
 
+  NotificationPreferences preferences = const NotificationPreferences(
+    dueTodayEnabled: true,
+    dueSoonEnabled: true,
+    lateEnabled: true,
+    syncCompleteEnabled: false,
+    vibrationEnabled: true,
+  );
+
   final List<String> filters = const <String>[
     'All',
-    'Today',
-    'This Week',
     'Late',
-    'No Due Date',
+    'Due Today',
+    'Due Soon',
+    'Sync',
   ];
 
   @override
@@ -61,7 +69,27 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     }
   }
 
-  Future<void> loadNotifications() async {
+  Future<void> scheduleRealAssignmentReminders() async {
+    try {
+      List<RealClassroomTask> reminderTasks = tasks;
+
+      if (reminderTasks.isEmpty) {
+        reminderTasks = await ClassroomDataService.instance.getAllCourseWork();
+      }
+
+      await NotificationService.instance.scheduleAssignmentReminderNotifications(
+        tasks: reminderTasks,
+      );
+
+      showMessage('Assignment reminders scheduled.');
+    } catch (error) {
+      setState(() {
+        errorText =
+        'Unable to schedule assignment reminders. ${cleanError(error.toString())}';
+      });
+    }
+  }
+  Future<void> loadNotifications({bool forceRefresh = false}) async {
     setState(() {
       isLoading = true;
       errorText = '';
@@ -70,14 +98,20 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     try {
       await GoogleLoginService.instance.signInSilently();
 
+      final NotificationPreferences loadedPreferences =
+      await NotificationService.instance.getPreferences();
+
       final List<RealClassroomTask> fetchedTasks =
-      await ClassroomDataService.instance.getAllCourseWork();
+      await ClassroomDataService.instance.getAllCourseWork(
+        forceRefresh: forceRefresh,
+      );
 
       if (!mounted) {
         return;
       }
 
       setState(() {
+        preferences = loadedPreferences;
         tasks = fetchedTasks;
         isLoading = false;
       });
@@ -88,45 +122,139 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
       setState(() {
         isLoading = false;
-        errorText = error.toString();
+        errorText = cleanError(error.toString());
       });
     }
   }
 
+  Future<void> sendReminderNow() async {
+    setState(() {
+      isSendingReminder = true;
+      errorText = '';
+    });
+
+    try {
+      List<RealClassroomTask> reminderTasks = tasks;
+
+      if (reminderTasks.isEmpty) {
+        reminderTasks = await ClassroomDataService.instance.getAllCourseWork();
+      }
+
+      await NotificationService.instance.showClassroomSummaryNotifications(
+        tasks: reminderTasks,
+        force: true,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        isSendingReminder = false;
+      });
+
+      showMessage('Reminder notification sent.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        isSendingReminder = false;
+        errorText =
+        'Unable to send reminder. ${cleanError(error.toString())}';
+      });
+    }
+  }
+
+  String cleanError(String value) {
+    return value.replaceAll('Exception:', '').trim();
+  }
+
+  void showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   List<ReminderItem> get reminders {
-    return tasks.asMap().entries.map((MapEntry<int, RealClassroomTask> item) {
-      return ReminderItem.fromTask(item.value, item.key);
-    }).toList();
+    final List<ReminderItem> items = <ReminderItem>[];
+    int index = 0;
+
+    if (preferences.lateEnabled) {
+      final List<RealClassroomTask> lateTasks = tasks.where(
+            (RealClassroomTask task) {
+          return task.submissionStatus == 'Late Not Submitted';
+        },
+      ).toList();
+
+      for (final RealClassroomTask task in lateTasks) {
+        items.add(ReminderItem.fromTask(task, 'Late', index));
+        index++;
+      }
+    }
+
+    if (preferences.dueTodayEnabled) {
+      final List<RealClassroomTask> todayTasks = tasks.where(
+        ReminderItem.isDueTodayAndNotSubmitted,
+      ).toList();
+
+      for (final RealClassroomTask task in todayTasks) {
+        items.add(ReminderItem.fromTask(task, 'Due Today', index));
+        index++;
+      }
+    }
+
+    if (preferences.dueSoonEnabled) {
+      final List<RealClassroomTask> dueSoonTasks = tasks.where(
+        ReminderItem.isDueSoonAndNotSubmitted,
+      ).toList();
+
+      for (final RealClassroomTask task in dueSoonTasks) {
+        items.add(ReminderItem.fromTask(task, 'Due Soon', index));
+        index++;
+      }
+    }
+
+    items.add(
+      ReminderItem.syncStatus(
+        lastSyncText: ClassroomDataService.instance.lastSyncText,
+        syncNotificationEnabled: preferences.syncCompleteEnabled,
+      ),
+    );
+
+    return items;
   }
 
   List<ReminderItem> get visibleReminders {
-    List<ReminderItem> list = reminders;
-
-    if (todayOnly) {
-      list = list.where((ReminderItem item) => item.category == 'Today').toList();
+    if (selectedFilter == 'All') {
+      return reminders;
     }
 
-    if (selectedFilter != 'All') {
-      list = list.where((ReminderItem item) {
-        return item.category == selectedFilter;
-      }).toList();
-    }
-
-    return list;
+    return reminders.where((ReminderItem item) {
+      return item.category == selectedFilter;
+    }).toList();
   }
 
   int get todayCount {
-    return reminders.where((ReminderItem item) => item.category == 'Today').length;
+    return reminders.where((ReminderItem item) {
+      return item.category == 'Due Today';
+    }).length;
   }
 
-  int get weekCount {
+  int get dueSoonCount {
     return reminders.where((ReminderItem item) {
-      return item.category == 'This Week';
+      return item.category == 'Due Soon';
     }).length;
   }
 
   int get lateCount {
-    return reminders.where((ReminderItem item) => item.category == 'Late').length;
+    return reminders.where((ReminderItem item) {
+      return item.category == 'Late';
+    }).length;
   }
 
   @override
@@ -156,36 +284,42 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   }
 
   Widget buildBody(bool isLightMode) {
-    return ListView(
-      controller: scrollController,
-      physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.only(
-        top: AppBar().preferredSize.height +
-            MediaQuery.of(context).padding.top +
-            28,
-        bottom: 32 + MediaQuery.of(context).padding.bottom,
-      ),
-      children: <Widget>[
-        animatedWidget(0, buildHeaderCard(isLightMode)),
-        animatedWidget(1, buildSettingsCard(isLightMode)),
-        animatedWidget(2, buildSummaryRow(isLightMode)),
-        animatedWidget(3, buildFilterSection(isLightMode)),
-        animatedWidget(
-          4,
-          buildSectionTitle(
-            title: 'Reminder Alerts',
-            subtitle: isLoading ? 'Loading' : '${visibleReminders.length} found',
-            isLightMode: isLightMode,
-          ),
+    return RefreshIndicator(
+      onRefresh: () => loadNotifications(forceRefresh: true),
+      child: ListView(
+        controller: scrollController,
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
         ),
-        if (isLoading) animatedWidget(5, loadingCard(isLightMode)),
-        if (!isLoading && errorText.isNotEmpty)
-          animatedWidget(5, errorCard(isLightMode)),
-        if (!isLoading && errorText.isEmpty && visibleReminders.isEmpty)
-          animatedWidget(5, emptyCard(isLightMode)),
-        if (!isLoading && errorText.isEmpty && visibleReminders.isNotEmpty)
-          animatedWidget(5, buildReminderList(isLightMode)),
-      ],
+        padding: EdgeInsets.only(
+          top: AppBar().preferredSize.height +
+              MediaQuery.of(context).padding.top +
+              28,
+          bottom: 32 + MediaQuery.of(context).padding.bottom,
+        ),
+        children: <Widget>[
+          animatedWidget(0, buildHeaderCard(isLightMode)),
+          animatedWidget(1, buildActionCard(isLightMode)),
+          animatedWidget(2, buildSummaryRow(isLightMode)),
+          animatedWidget(3, buildFilterSection(isLightMode)),
+          animatedWidget(
+            4,
+            buildSectionTitle(
+              title: 'Notification Center',
+              subtitle:
+              isLoading ? 'Loading' : '${visibleReminders.length} alerts',
+              isLightMode: isLightMode,
+            ),
+          ),
+          if (isLoading) animatedWidget(5, loadingCard(isLightMode)),
+          if (!isLoading && errorText.isNotEmpty)
+            animatedWidget(5, errorCard(isLightMode)),
+          if (!isLoading && errorText.isEmpty && visibleReminders.isEmpty)
+            animatedWidget(5, emptyCard(isLightMode)),
+          if (!isLoading && errorText.isEmpty && visibleReminders.isNotEmpty)
+            animatedWidget(5, buildReminderList(isLightMode)),
+        ],
+      ),
     );
   }
 
@@ -267,7 +401,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'Reminders',
+                        'Notifications',
                         style: TextStyle(
                           fontFamily: AppTheme.fontName,
                           fontSize: 28 - 6 * topBarOpacity,
@@ -280,7 +414,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     circleButton(
                       icon: Icons.refresh_rounded,
                       isLightMode: isLightMode,
-                      onTap: loadNotifications,
+                      onTap: () => loadNotifications(forceRefresh: true),
                     ),
                   ],
                 ),
@@ -366,7 +500,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    'Classroom Reminders',
+                    'Classroom Alerts',
                     style: TextStyle(
                       fontFamily: AppTheme.fontName,
                       fontSize: 21,
@@ -376,7 +510,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'See important deadline alerts from your real Google Classroom assignments.',
+                    'See due today, due soon and late not submitted assignments from Google Classroom.',
                     style: TextStyle(
                       fontFamily: AppTheme.fontName,
                       fontSize: 12.5,
@@ -394,7 +528,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
-  Widget buildSettingsCard(bool isLightMode) {
+  Widget buildActionCard(bool isLightMode) {
     return Padding(
       padding: const EdgeInsets.only(left: 24, right: 24, bottom: 16),
       child: Container(
@@ -406,37 +540,123 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         ),
         child: Column(
           children: <Widget>[
-            switchRow(
-              title: 'Reminder Alerts',
-              subtitle: reminderEnabled ? 'Enabled' : 'Disabled',
-              value: reminderEnabled,
-              color: const Color(0xFFFFA726),
+            infoRow(
+              title: 'Phone Notifications',
+              subtitle:
+              'Due Today: ${preferences.dueTodayEnabled ? "ON" : "OFF"}  •  Due Soon: ${preferences.dueSoonEnabled ? "ON" : "OFF"}  •  Late: ${preferences.lateEnabled ? "ON" : "OFF"}',
+              icon: Icons.phone_android_rounded,
+              color: const Color(0xFF42A5F5),
               isLightMode: isLightMode,
-              onChanged: (bool value) {
-                setState(() {
-                  reminderEnabled = value;
-                });
-              },
             ),
+
             Divider(
               color: isLightMode
                   ? AppTheme.grey.withOpacity(0.16)
                   : Colors.white.withOpacity(0.10),
             ),
-            switchRow(
-              title: 'Today Only',
-              subtitle: todayOnly ? 'Showing today tasks' : 'Showing all alerts',
-              value: todayOnly,
-              color: const Color(0xFF42A5F5),
-              isLightMode: isLightMode,
-              onChanged: (bool value) {
-                setState(() {
-                  todayOnly = value;
-                  if (value) {
-                    selectedFilter = 'All';
-                  }
-                });
-              },
+
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: isSendingReminder ? null : sendReminderNow,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 4),
+                child: Row(
+                  children: <Widget>[
+                    Container(
+                      height: 46,
+                      width: 46,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFA726).withOpacity(0.13),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: isSendingReminder
+                          ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                          : const Icon(
+                        Icons.send_rounded,
+                        color: Color(0xFFFFA726),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        isSendingReminder
+                            ? 'Sending reminder...'
+                            : 'Send Reminder Now',
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontName,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: isLightMode ? AppTheme.darkText : AppTheme.white,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: isLightMode
+                          ? AppTheme.grey
+                          : Colors.white.withOpacity(0.65),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Add the new divider and closed-app test button BELOW Send Reminder Now.
+            Divider(
+              color: isLightMode
+                  ? AppTheme.grey.withOpacity(0.16)
+                  : Colors.white.withOpacity(0.10),
+            ),
+
+
+            Divider(
+              color: isLightMode
+                  ? AppTheme.grey.withOpacity(0.16)
+                  : Colors.white.withOpacity(0.10),
+            ),
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: scheduleRealAssignmentReminders,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 4),
+                child: Row(
+                  children: <Widget>[
+                    Container(
+                      height: 46,
+                      width: 46,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF738AE6).withOpacity(0.13),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.alarm_rounded,
+                        color: Color(0xFF738AE6),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Schedule Assignment Reminders',
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontName,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: isLightMode ? AppTheme.darkText : AppTheme.white,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: isLightMode
+                          ? AppTheme.grey
+                          : Colors.white.withOpacity(0.65),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -444,13 +664,12 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
-  Widget switchRow({
+  Widget infoRow({
     required String title,
     required String subtitle,
-    required bool value,
+    required IconData icon,
     required Color color,
     required bool isLightMode,
-    required ValueChanged<bool> onChanged,
   }) {
     return Row(
       children: <Widget>[
@@ -461,10 +680,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
             color: color.withOpacity(0.13),
             borderRadius: BorderRadius.circular(14),
           ),
-          child: Icon(
-            value ? Icons.notifications_active_rounded : Icons.notifications_off,
-            color: color,
-          ),
+          child: Icon(icon, color: color),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -486,6 +702,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 style: TextStyle(
                   fontFamily: AppTheme.fontName,
                   fontSize: 12,
+                  height: 1.35,
                   color: isLightMode
                       ? AppTheme.grey
                       : AppTheme.white.withOpacity(0.65),
@@ -493,11 +710,6 @@ class _NotificationsScreenState extends State<NotificationsScreen>
               ),
             ],
           ),
-        ),
-        Switch(
-          value: value,
-          activeColor: color,
-          onChanged: onChanged,
         ),
       ],
     );
@@ -512,15 +724,15 @@ class _NotificationsScreenState extends State<NotificationsScreen>
             title: 'Today',
             value: todayCount.toString(),
             icon: Icons.today_rounded,
-            color: const Color(0xFFEF5350),
+            color: const Color(0xFFFFA726),
             isLightMode: isLightMode,
           ),
           const SizedBox(width: 10),
           summaryBox(
-            title: 'Week',
-            value: weekCount.toString(),
+            title: 'Due Soon',
+            value: dueSoonCount.toString(),
             icon: Icons.date_range_rounded,
-            color: const Color(0xFFFFA726),
+            color: const Color(0xFF42A5F5),
             isLightMode: isLightMode,
           ),
           const SizedBox(width: 10),
@@ -528,7 +740,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
             title: 'Late',
             value: lateCount.toString(),
             icon: Icons.warning_rounded,
-            color: const Color(0xFF42A5F5),
+            color: const Color(0xFFEF5350),
             isLightMode: isLightMode,
           ),
         ],
@@ -587,7 +799,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       children: <Widget>[
         buildSectionTitle(
           title: 'Filter',
-          subtitle: todayOnly ? 'Today Only' : selectedFilter,
+          subtitle: selectedFilter,
           isLightMode: isLightMode,
         ),
         SizedBox(
@@ -605,9 +817,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 padding: const EdgeInsets.only(left: 4, right: 8, bottom: 8),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(22),
-                  onTap: todayOnly
-                      ? null
-                      : () {
+                  onTap: () {
                     setState(() {
                       selectedFilter = filter;
                     });
@@ -615,7 +825,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 18),
                     decoration: BoxDecoration(
-                      gradient: selected && !todayOnly
+                      gradient: selected
                           ? const LinearGradient(
                         colors: <Color>[
                           Color(0xFF2633C5),
@@ -623,12 +833,13 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                         ],
                       )
                           : null,
-                      color: selected && !todayOnly
+                      color: selected
                           ? null
                           : isLightMode
                           ? Colors.white
                           : Colors.white.withOpacity(0.06),
                       borderRadius: BorderRadius.circular(22),
+                      boxShadow: selected ? null : cardShadow(isLightMode),
                     ),
                     child: Center(
                       child: Text(
@@ -637,7 +848,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                           fontFamily: AppTheme.fontName,
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
-                          color: selected && !todayOnly
+                          color: selected
                               ? Colors.white
                               : isLightMode
                               ? AppTheme.darkText
@@ -692,17 +903,6 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   }
 
   Widget buildReminderList(bool isLightMode) {
-    if (!reminderEnabled) {
-      return messageCard(
-        isLightMode: isLightMode,
-        icon: Icons.notifications_off_rounded,
-        color: const Color(0xFFEF5350),
-        title: 'Reminder alerts are disabled',
-        subtitle: 'Turn on Reminder Alerts to view Classroom alert cards.',
-        isLoading: false,
-      );
-    }
-
     return Column(
       children: visibleReminders.map((ReminderItem item) {
         return Padding(
@@ -711,6 +911,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
             item: item,
             isLightMode: isLightMode,
             onTap: () {
+              if (item.task == null) {
+                showMessage(item.description);
+                return;
+              }
+
               Navigator.push<dynamic>(
                 context,
                 MaterialPageRoute<dynamic>(
@@ -723,6 +928,11 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     description: item.description,
                     color: item.color,
                     icon: item.icon,
+                    workType: item.workType ?? 'COURSE_WORK',
+                    maxPointsText: item.maxPointsText ?? 'No points',
+                    gradeText: item.gradeText ?? 'Not graded',
+                    submissionState: item.submissionState ?? 'Unknown',
+                    alternateLink: item.alternateLink ?? '',
                   ),
                 ),
               );
@@ -738,8 +948,8 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       isLightMode: isLightMode,
       icon: Icons.cloud_sync_rounded,
       color: const Color(0xFF42A5F5),
-      title: 'Loading reminders...',
-      subtitle: 'Fetching upcoming assignments from Google Classroom.',
+      title: 'Loading notifications...',
+      subtitle: 'Checking Classroom assignments and saved notification settings.',
       isLoading: true,
     );
   }
@@ -749,7 +959,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       isLightMode: isLightMode,
       icon: Icons.error_outline_rounded,
       color: const Color(0xFFEF5350),
-      title: 'Unable to load reminders',
+      title: 'Unable to load notifications',
       subtitle: errorText,
       isLoading: false,
     );
@@ -760,8 +970,8 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       isLightMode: isLightMode,
       icon: Icons.notifications_none_rounded,
       color: const Color(0xFF66BB6A),
-      title: 'No reminders found',
-      subtitle: 'No relevant Classroom reminders were found.',
+      title: 'No alerts found',
+      subtitle: 'No alerts match the selected filter.',
       isLoading: false,
     );
   }
@@ -933,7 +1143,8 @@ class ReminderCard extends StatelessWidget {
           runSpacing: 5,
           children: <Widget>[
             pill(item.category, item.color),
-            pill(item.priority, priorityColor),
+            if (item.category != item.status) pill(item.status, item.statusColor),
+            pill(item.priority, item.priorityColor),
           ],
         ),
       ],
@@ -981,18 +1192,6 @@ class ReminderCard extends StatelessWidget {
       ),
     );
   }
-
-  Color get priorityColor {
-    if (item.priority == 'High') {
-      return const Color(0xFFEF5350);
-    }
-
-    if (item.priority == 'Medium') {
-      return const Color(0xFFFFA726);
-    }
-
-    return const Color(0xFF66BB6A);
-  }
 }
 
 class ReminderItem {
@@ -1006,26 +1205,154 @@ class ReminderItem {
     required this.description,
     required this.color,
     required this.icon,
+    required this.statusColor,
+    required this.priorityColor,
+    this.task,
+    this.workType,
+    this.maxPointsText,
+    this.gradeText,
+    this.submissionState,
+    this.alternateLink,
   });
 
-  factory ReminderItem.fromTask(RealClassroomTask task, int index) {
-    final String category = getCategory(task.dueDateTime);
+  factory ReminderItem.fromTask(
+      RealClassroomTask task,
+      String category,
+      int index,
+      ) {
     final Color color = getColor(category, index);
-    final String priority = getPriority(task.dueDateTime);
 
     return ReminderItem(
-      title: task.title,
+      task: task,
+      title: getAlertTitle(task, category),
       course: task.courseName,
       dateText: formatDate(task.dueDateTime),
       category: category,
-      status: 'Pending',
-      priority: priority,
-      description: task.description.isEmpty
-          ? 'This reminder was loaded from Google Classroom API.'
-          : task.description,
+      status: task.submissionStatus,
+      priority: getPriority(task.dueDateTime, category),
+      description: getDescription(task, category),
       color: color,
       icon: getIcon(category),
+      statusColor: getStatusColor(task.submissionStatus),
+      priorityColor: getPriorityColor(getPriority(task.dueDateTime, category)),
+      workType: task.workType,
+      maxPointsText:
+      task.maxPoints == null ? null : '${task.maxPoints} points',
+      gradeText: task.gradeText,
+      submissionState: task.submissionState,
+      alternateLink: task.alternateLink,
     );
+  }
+
+  factory ReminderItem.syncStatus({
+    required String lastSyncText,
+    required bool syncNotificationEnabled,
+  }) {
+    return ReminderItem(
+      title: 'Classroom Sync Status',
+      course: 'Google Classroom',
+      dateText: lastSyncText,
+      category: 'Sync',
+      status: syncNotificationEnabled ? 'Sync Alert ON' : 'Sync Alert OFF',
+      priority: 'Info',
+      description:
+      'Last sync status: $lastSyncText. Sync complete phone notification is ${syncNotificationEnabled ? "enabled" : "disabled"}.',
+      color: const Color(0xFF738AE6),
+      icon: Icons.cloud_done_rounded,
+      statusColor:
+      syncNotificationEnabled ? const Color(0xFF66BB6A) : AppTheme.grey,
+      priorityColor: const Color(0xFF738AE6),
+    );
+  }
+
+  static bool isDueTodayAndNotSubmitted(RealClassroomTask task) {
+    if (task.submissionStatus == 'Submitted') {
+      return false;
+    }
+
+    if (task.submissionStatus == 'Late Not Submitted') {
+      return false;
+    }
+
+    final DateTime? dueDate = task.dueDateTime;
+
+    if (dueDate == null) {
+      return false;
+    }
+
+    final DateTime now = DateTime.now();
+
+    return dueDate.year == now.year &&
+        dueDate.month == now.month &&
+        dueDate.day == now.day;
+  }
+
+  static bool isDueSoonAndNotSubmitted(RealClassroomTask task) {
+    if (task.submissionStatus == 'Submitted') {
+      return false;
+    }
+
+    if (task.submissionStatus == 'Late Not Submitted') {
+      return false;
+    }
+
+    final DateTime? dueDate = task.dueDateTime;
+
+    if (dueDate == null) {
+      return false;
+    }
+
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day);
+    final DateTime dueDay = DateTime(
+      dueDate.year,
+      dueDate.month,
+      dueDate.day,
+    );
+
+    final int difference = dueDay.difference(today).inDays;
+
+    return difference > 0 && difference <= 3;
+  }
+
+  static String getAlertTitle(RealClassroomTask task, String category) {
+    if (category == 'Late') {
+      return 'Late: ${task.title}';
+    }
+
+    if (category == 'Due Today') {
+      return 'Due Today: ${task.title}';
+    }
+
+    if (category == 'Due Soon') {
+      return 'Due Soon: ${task.title}';
+    }
+
+    return task.title;
+  }
+
+  static String getDescription(RealClassroomTask task, String category) {
+    if (category == 'Late') {
+      return task.description.isEmpty
+          ? 'This assignment is late and not submitted.'
+          : task.description;
+    }
+
+    if (category == 'Due Today') {
+      return task.description.isEmpty
+          ? 'This assignment is due today. Submit it before the deadline.'
+          : task.description;
+    }
+
+    if (category == 'Due Soon') {
+      return task.description.isEmpty
+          ? 'This assignment is due within the next 3 days.'
+          : task.description;
+    }
+
+    return task.description.isEmpty
+        ? 'This reminder was loaded from Google Classroom API.'
+        : task.description;
   }
 
   static String formatDate(DateTime? dateTime) {
@@ -1036,9 +1363,13 @@ class ReminderItem {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
   }
 
-  static String getCategory(DateTime? dateTime) {
+  static String getPriority(DateTime? dateTime, String category) {
+    if (category == 'Late' || category == 'Due Today') {
+      return 'High';
+    }
+
     if (dateTime == null) {
-      return 'No Due Date';
+      return 'Low';
     }
 
     final DateTime now = DateTime.now();
@@ -1051,33 +1382,11 @@ class ReminderItem {
 
     final int difference = dueDay.difference(today).inDays;
 
-    if (difference < 0) {
-      return 'Late';
-    }
-
-    if (difference == 0) {
-      return 'Today';
-    }
-
-    if (difference <= 7) {
-      return 'This Week';
-    }
-
-    return 'Upcoming';
-  }
-
-  static String getPriority(DateTime? dateTime) {
-    if (dateTime == null) {
-      return 'Low';
-    }
-
-    final int difference = dateTime.difference(DateTime.now()).inDays;
-
     if (difference <= 1) {
       return 'High';
     }
 
-    if (difference <= 5) {
+    if (difference <= 3) {
       return 'Medium';
     }
 
@@ -1089,16 +1398,16 @@ class ReminderItem {
       return Icons.warning_rounded;
     }
 
-    if (category == 'Today') {
+    if (category == 'Due Today') {
       return Icons.today_rounded;
     }
 
-    if (category == 'This Week') {
+    if (category == 'Due Soon') {
       return Icons.date_range_rounded;
     }
 
-    if (category == 'No Due Date') {
-      return Icons.event_busy_rounded;
+    if (category == 'Sync') {
+      return Icons.cloud_done_rounded;
     }
 
     return Icons.notifications_active_rounded;
@@ -1109,15 +1418,15 @@ class ReminderItem {
       return const Color(0xFFEF5350);
     }
 
-    if (category == 'Today') {
+    if (category == 'Due Today') {
       return const Color(0xFFFFA726);
     }
 
-    if (category == 'This Week') {
+    if (category == 'Due Soon') {
       return const Color(0xFF42A5F5);
     }
 
-    if (category == 'No Due Date') {
+    if (category == 'Sync') {
       return const Color(0xFF738AE6);
     }
 
@@ -1131,6 +1440,43 @@ class ReminderItem {
     return colors[index % colors.length];
   }
 
+  static Color getStatusColor(String status) {
+    if (status == 'Submitted') {
+      return const Color(0xFF66BB6A);
+    }
+
+    if (status == 'Late Not Submitted') {
+      return const Color(0xFFEF5350);
+    }
+
+    if (status.contains('OFF')) {
+      return AppTheme.grey;
+    }
+
+    if (status.contains('ON')) {
+      return const Color(0xFF66BB6A);
+    }
+
+    return const Color(0xFFFFA726);
+  }
+
+  static Color getPriorityColor(String priority) {
+    if (priority == 'High') {
+      return const Color(0xFFEF5350);
+    }
+
+    if (priority == 'Medium') {
+      return const Color(0xFFFFA726);
+    }
+
+    if (priority == 'Info') {
+      return const Color(0xFF738AE6);
+    }
+
+    return const Color(0xFF66BB6A);
+  }
+
+  final RealClassroomTask? task;
   final String title;
   final String course;
   final String dateText;
@@ -1140,4 +1486,11 @@ class ReminderItem {
   final String description;
   final Color color;
   final IconData icon;
+  final Color statusColor;
+  final Color priorityColor;
+  final String? workType;
+  final String? maxPointsText;
+  final String? gradeText;
+  final String? submissionState;
+  final String? alternateLink;
 }

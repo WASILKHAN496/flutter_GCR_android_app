@@ -4,6 +4,7 @@ import 'package:best_flutter_ui_templates/services/google_login_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:best_flutter_ui_templates/services/classroom_data_service.dart';
+import 'package:best_flutter_ui_templates/services/notification_service.dart';
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -20,8 +21,10 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool isLoading = true;
 
   bool classroomSync = true;
-  bool assignmentAlerts = true;
-  bool deadlineAlerts = true;
+  bool dueTodayNotifications = true;
+  bool dueSoonNotifications = true;
+  bool lateNotifications = true;
+  bool syncCompleteNotifications = false;
   bool reminderVibration = true;
   bool weeklySummary = true;
   bool darkModePreference = false;
@@ -39,9 +42,35 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
 
     animationController.forward();
+    loadNotificationSettings();
     loadAccount();
   }
+  Future<void> loadNotificationSettings() async {
+    final NotificationPreferences preferences =
+    await NotificationService.instance.getPreferences();
 
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      dueTodayNotifications = preferences.dueTodayEnabled;
+      dueSoonNotifications = preferences.dueSoonEnabled;
+      lateNotifications = preferences.lateEnabled;
+      syncCompleteNotifications = preferences.syncCompleteEnabled;
+      reminderVibration = preferences.vibrationEnabled;
+    });
+  }
+
+  Future<void> saveNotificationSetting({
+    required String key,
+    required bool value,
+  }) async {
+    await NotificationService.instance.savePreference(
+      key: key,
+      value: value,
+    );
+  }
   Future<void> loadAccount() async {
     setState(() {
       isLoading = true;
@@ -422,48 +451,85 @@ class _SettingsScreenState extends State<SettingsScreen>
           isLightMode: isLightMode,
         ),
         settingSwitchTile(
-          title: 'Assignment Notifications',
-          subtitle: 'Get alerts when assignments are available.',
-          value: assignmentAlerts,
+          title: 'Due Today Notifications',
+          subtitle: 'Notify when assignments are due today.',
+          value: dueTodayNotifications,
           isLightMode: isLightMode,
           onChanged: (bool value) {
             setState(() {
-              assignmentAlerts = value;
+              dueTodayNotifications = value;
             });
+
+            saveNotificationSetting(
+              key: NotificationService.dueTodayEnabledKey,
+              value: value,
+            );
           },
         ),
         settingSwitchTile(
-          title: 'Deadline Alerts',
-          subtitle: 'Show alerts for today and upcoming due dates.',
-          value: deadlineAlerts,
+          title: 'Due Soon Notifications',
+          subtitle: 'Notify when assignments are due within the next 3 days.',
+          value: dueSoonNotifications,
           isLightMode: isLightMode,
           onChanged: (bool value) {
             setState(() {
-              deadlineAlerts = value;
+              dueSoonNotifications = value;
             });
+
+            saveNotificationSetting(
+              key: NotificationService.dueSoonEnabledKey,
+              value: value,
+            );
+          },
+        ),
+        settingSwitchTile(
+          title: 'Late Assignment Alerts',
+          subtitle: 'Notify when assignments are late and not submitted.',
+          value: lateNotifications,
+          isLightMode: isLightMode,
+          onChanged: (bool value) {
+            setState(() {
+              lateNotifications = value;
+            });
+
+            saveNotificationSetting(
+              key: NotificationService.lateEnabledKey,
+              value: value,
+            );
+          },
+        ),
+        settingSwitchTile(
+          title: 'Sync Complete Notification',
+          subtitle: 'Notify when Classroom sync completes successfully.',
+          value: syncCompleteNotifications,
+          isLightMode: isLightMode,
+          onChanged: (bool value) {
+            setState(() {
+              syncCompleteNotifications = value;
+            });
+
+            saveNotificationSetting(
+              key: NotificationService.syncCompleteEnabledKey,
+              value: value,
+            );
           },
         ),
         settingSwitchTile(
           title: 'Vibrate',
-          subtitle: 'Vibrate when an important reminder is shown.',
+          subtitle: 'Vibrate when a notification is shown.',
           value: reminderVibration,
           isLightMode: isLightMode,
           onChanged: (bool value) {
             setState(() {
               reminderVibration = value;
             });
+
+            saveNotificationSetting(
+              key: NotificationService.vibrationEnabledKey,
+              value: value,
+            );
           },
         ),
-        settingArrowTile(
-          title: 'Set Reminder Sound',
-          subtitle: 'Choose a custom sound for deadline reminders.',
-          isLightMode: isLightMode,
-          onTap: () {
-            showMessage('Sound picker can be added in the next phase.');
-          },
-        ),
-
-
       ],
     );
   }
