@@ -255,7 +255,7 @@ class NotificationService {
     timezone.TZDateTime oneDayBeforeDue = timezone.TZDateTime(
       timezone.local,
       dueDateTime.year,
-      dueDateTime.month,
+      dueDateTime.month ,
       dueDateTime.day,
       9,
     ).subtract(const Duration(days: 1));
