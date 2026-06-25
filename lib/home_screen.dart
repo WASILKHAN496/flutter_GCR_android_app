@@ -15,9 +15,9 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:best_flutter_ui_templates/services/app_guide_service.dart';
-import 'package:best_flutter_ui_templates/notifications_screen.dart';
+
 import 'package:best_flutter_ui_templates/services/notification_service.dart';
-import 'package:best_flutter_ui_templates/services/notification_service.dart';
+
 //line 183 to change to force notification
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
@@ -70,7 +70,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
     loadDashboardData().then((_) {
       startNetworkWatcher();
-      startBackgroundSync();
+      startSmartAutoSync();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       showFirstTimeGuideIfNeeded();
@@ -95,78 +95,71 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     });
 
     try {
-      await GoogleLoginService.instance.signInSilently();
-
-      if (forceRefresh) {
-        await ClassroomDataService.instance.refreshAllData();
-      } else {
-        await ClassroomDataService.instance.loadOfflineCache();
-      }
-
-      final List<RealClassroomCourse> fetchedCourses =
-      await ClassroomDataService.instance.getCourses(
-        forceRefresh: false,
-      );
-
-      final List<RealClassroomTask> fetchedTasks =
-      await ClassroomDataService.instance.getAllCourseWork(
-        forceRefresh: false,
-      );
-
-      final GoogleSignInAccount? account =
-          GoogleLoginService.instance.currentUser;
-      dashboardAccount = account;
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        studentName = firstName(account?.displayName);
-        realCourses = fetchedCourses;
-        realTasks = fetchedTasks;
-        isOfflineMode = ClassroomDataService.instance.isUsingOfflineData;
-        syncStatusText = ClassroomDataService.instance.lastSyncText;
-        isLoading = false;
-        errorText = '';
-      });
-    } catch (error) {
-      final bool offlineLoaded =
       await ClassroomDataService.instance.loadOfflineCache();
 
-      if (offlineLoaded) {
-        final List<RealClassroomCourse> offlineCourses =
-        await ClassroomDataService.instance.getCourses();
+      final bool connected = await isInternetAvailable();
 
-        final List<RealClassroomTask> offlineTasks =
-        await ClassroomDataService.instance.getAllCourseWork();
+      final GoogleSignInAccount? account =
+      await GoogleLoginService.instance.signInSilently();
 
-        if (!mounted) {
-          return;
-        }
-
-        setState(() {
-          realCourses = offlineCourses;
-          realTasks = offlineTasks;
-          isOfflineMode = true;
-          syncStatusText = ClassroomDataService.instance.lastSyncText;
-          isLoading = false;
-          errorText = '';
-        });
-
-        return;
+      if (forceRefresh && connected) {
+        await ClassroomDataService.instance.refreshAllData();
       }
+
+      final List<RealClassroomCourse> savedCourses =
+      await ClassroomDataService.instance.getCourses();
+
+      final List<RealClassroomTask> savedTasks =
+      await ClassroomDataService.instance.getAllCourseWork();
 
       if (!mounted) {
         return;
       }
 
       setState(() {
-        isLoading = false;
-        isOfflineMode = false;
+        dashboardAccount = account;
+        studentName = firstName(account?.displayName);
+        realCourses = savedCourses;
+        realTasks = savedTasks;
+
+        // Important:
+        // Banner offline mode should depend on internet, not cached data.
+        hasInternetConnection = connected;
+        isOfflineMode = !connected;
+
         syncStatusText = ClassroomDataService.instance.lastSyncText;
-        errorText = '';
+        isLoading = false;
+      });
+
+      if (forceRefresh && connected) {
+        await NotificationService.instance.showClassroomSummaryNotifications(
+          tasks: savedTasks,
+          force: true,
+        );
+
+        await NotificationService.instance.scheduleAssignmentReminderNotifications(
+          tasks: savedTasks,
+        );
+
+        await NotificationService.instance.showSyncCompleteNotification(
+          totalCourses: savedCourses.length,
+          totalTasks: savedTasks.length,
+        );
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        isLoading = false;
+        errorText = cleanError(error.toString());
+        syncStatusText = ClassroomDataService.instance.lastSyncText;
       });
     }
+  }
+  String cleanError(String value) {
+    return value.replaceAll('Exception:', '').trim();
   }
   Future<void> startBackgroundSync() async {
     if (isBackgroundSyncing) {
@@ -203,7 +196,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       setState(() {
         realCourses = syncedCourses;
         realTasks = syncedTasks;
-        isOfflineMode = ClassroomDataService.instance.isUsingOfflineData;
+        isOfflineMode = !hasInternetConnection;
         syncStatusText = ClassroomDataService.instance.lastSyncText;
         isBackgroundSyncing = false;
         errorText = '';
@@ -215,7 +208,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
 
       setState(() {
         isBackgroundSyncing = false;
-        isOfflineMode = ClassroomDataService.instance.isUsingOfflineData;
+        isOfflineMode = !hasInternetConnection;
         syncStatusText = ClassroomDataService.instance.lastSyncText;
       });
     }
@@ -232,34 +225,75 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
       },
     );
   }
-
-  Future<void> checkInternetConnection() async {
-    bool connected = false;
-
+  void showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+  Future<bool> isInternetAvailable() async {
     try {
       final List<InternetAddress> result =
       await InternetAddress.lookup('google.com').timeout(
         const Duration(seconds: 2),
       );
 
-      connected = result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
     } catch (_) {
-      connected = false;
+      return false;
     }
+  }
+  Future<void> startSmartAutoSync() async {
+    final bool connected = await isInternetAvailable();
 
     if (!mounted) {
       return;
     }
 
-    if (hasInternetConnection != connected) {
-      setState(() {
-        hasInternetConnection = connected;
+    setState(() {
+      hasInternetConnection = connected;
+      isOfflineMode = !connected;
+    });
 
-        if (!connected) {
-          isOfflineMode = true;
-          syncStatusText = ClassroomDataService.instance.lastSyncText;
-        }
+    if (!connected) {
+      return;
+    }
+
+    if (!ClassroomDataService.instance.shouldAutoSync) {
+      setState(() {
+        syncStatusText = ClassroomDataService.instance.lastSyncText;
       });
+
+      return;
+    }
+
+    await startBackgroundSync();
+  }
+  Future<void> checkInternetConnection() async {
+    final bool wasConnected = hasInternetConnection;
+    final bool connected = await isInternetAvailable();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      hasInternetConnection = connected;
+      isOfflineMode = !connected;
+
+      if (!connected) {
+        syncStatusText = ClassroomDataService.instance.lastSyncText;
+      }
+    });
+
+    final bool internetCameBack = !wasConnected && connected;
+
+    if (internetCameBack) {
+      showMessage('Internet connected. Syncing Classroom updates...');
+
+      await startBackgroundSync();
     }
   }
   Future<void> showFirstTimeGuideIfNeeded() async {
@@ -1526,8 +1560,31 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
     );
   }
   Widget syncStatusBanner(bool isLightMode) {
-    final Color statusColor =
-    isOfflineMode ? const Color(0xFFFFA726) : const Color(0xFF2ECC71);
+    final bool offline = !hasInternetConnection;
+
+    final Color statusColor = offline
+        ? const Color(0xFFFFA726)
+        : isBackgroundSyncing
+        ? const Color(0xFF42A5F5)
+        : const Color(0xFF2ECC71);
+
+    final IconData statusIcon = offline
+        ? Icons.wifi_off_rounded
+        : isBackgroundSyncing
+        ? Icons.sync_rounded
+        : Icons.cloud_done_rounded;
+
+    final String title = offline
+        ? 'No Internet Connection'
+        : isBackgroundSyncing
+        ? 'Syncing in Background'
+        : 'Online Sync Active';
+
+    final String subtitle = offline
+        ? 'Internet is off. Showing saved Classroom data. $syncStatusText'
+        : isBackgroundSyncing
+        ? 'Showing saved data now. New Classroom updates are loading silently.'
+        : 'Internet is connected. Last sync: $syncStatusText';
 
     return Padding(
       padding: const EdgeInsets.only(left: 24, right: 24, bottom: 18),
@@ -1559,9 +1616,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(
-                isOfflineMode
-                    ? Icons.wifi_off_rounded
-                    : Icons.cloud_done_rounded,
+                statusIcon,
                 color: statusColor,
                 size: 24,
               ),
@@ -1572,13 +1627,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    isBackgroundSyncing
-                        ? 'Syncing in Background'
-                        : !hasInternetConnection
-                        ? 'No Internet Connection'
-                        : isOfflineMode
-                        ? 'Offline Mode Active'
-                        : 'Online Sync Active',
+                    title,
                     style: TextStyle(
                       fontFamily: AppTheme.fontName,
                       fontWeight: FontWeight.w800,
@@ -1588,13 +1637,7 @@ class _MyHomePageState extends State<MyHomePage> with TickerProviderStateMixin {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    isBackgroundSyncing
-                        ? 'Showing saved data now. New Classroom updates are loading silently.'
-                        : !hasInternetConnection
-                        ? 'Internet is off. Showing saved Classroom data. $syncStatusText'
-                        : isOfflineMode
-                        ? 'Showing last saved Classroom data. $syncStatusText'
-                        : 'Google Classroom data is updated. Last sync: $syncStatusText',
+                    subtitle,
                     style: TextStyle(
                       fontFamily: AppTheme.fontName,
                       fontWeight: FontWeight.w500,

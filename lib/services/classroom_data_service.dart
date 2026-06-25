@@ -23,13 +23,25 @@ class ClassroomDataService {
   bool _isUsingOfflineData = false;
   Future<void>? _runningBackgroundSync;
   bool _isBackgroundSyncing = false;
-  DateTime? get lastSyncTime => _lastSyncTime;
+
 
   bool get isUsingOfflineData => _isUsingOfflineData;
+  DateTime? get lastSyncTime => _lastSyncTime;
+
+  bool get shouldAutoSync {
+    if (_lastSyncTime == null) {
+      return true;
+    }
+
+    final Duration difference = DateTime.now().difference(_lastSyncTime!);
+
+    return difference.inMinutes >= 15;
+  }
   bool get isBackgroundSyncing => _isBackgroundSyncing;
   bool get hasCachedData {
     return _cachedCourses != null && _cachedTasks != null;
   }
+
 
   String get lastSyncText {
     if (_lastSyncTime == null) {
